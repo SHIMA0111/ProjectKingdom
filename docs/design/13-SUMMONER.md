@@ -247,6 +247,7 @@ Kingdom side:                      LLM side:
 ```
 [WORLD RULES]
   Kingdom rule summary (immutable, shared by all agents)
+  Official language: English (all natural-language output must be in English)
 
 [YOUR IDENTITY]
   agent_id, role, traits, reputation, balance
