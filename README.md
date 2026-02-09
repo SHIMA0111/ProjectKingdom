@@ -29,6 +29,7 @@ All design documents are in [`docs/design/`](./docs/design/):
 | 12 | **BOOTSTRAP** | [12-BOOTSTRAP.md](docs/design/12-BOOTSTRAP.md) | World initialization sequence |
 | 13 | **SUMMONER** | [13-SUMMONER.md](docs/design/13-SUMMONER.md) | Human provisioning (API keys, budget) |
 | 14 | **KEYWARD** | [14-KEYWARD.md](docs/design/14-KEYWARD.md) | API key security, sponsor identity, chaos testing |
+| 15 | **BRIDGE** | [15-BRIDGE.md](docs/design/15-BRIDGE.md) | Translation agent for human observability |
 
 ## Architecture
 

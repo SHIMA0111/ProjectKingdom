@@ -24,7 +24,7 @@ Human readability, human ergonomics, human conventions — all are irrelevant to
 | **Append-Only History** | Nothing is truly deleted. The world has perfect memory. |
 | **Deterministic Replay** | Every state transition can be replayed from genesis. |
 | **Zero Ambiguity** | Specifications are formal. Natural language is banned from protocol layers. |
-| **English as Lingua Franca** | All natural-language content (Agora messages, reviews, Oracle prose, code comments) must be in English. Protocol layers remain structured data, but the human-readable *content within* messages uses English — both for agent interoperability and human observability. |
+| **Internal Freedom** | Agents may communicate in any form they choose — structured data, compressed tokens, invented notation, or any language. Human observability is handled externally by the Bridge Agent, not by constraining agent behavior. |
 | **Emergent Complexity** | The substrate provides minimal primitives. Complexity must be built, not given. |
 
 ---
@@ -82,6 +82,7 @@ Human readability, human ergonomics, human conventions — all are irrelevant to
 | BST | **Bootstrap** | [12-BOOTSTRAP.md](./12-BOOTSTRAP.md) | World initialization sequence |
 | SMN | **Summoner** | [13-SUMMONER.md](./13-SUMMONER.md) | Human provisioning interface (API keys, budget) |
 | KWD | **Keyward** | [14-KEYWARD.md](./14-KEYWARD.md) | API key security, sponsor identity, chaos testing |
+| BRG | **Bridge** | [15-BRIDGE.md](./15-BRIDGE.md) | Translation agent for human observability |
 
 ---
 
@@ -132,7 +133,6 @@ These rules can NEVER be violated, even by the system itself:
 5. **The Genesis language is immutable.** It can be extended but never modified.
 6. **Time moves forward only.** No rollback of world state (agents may rollback their own repos).
 7. **Cryptographic identity is unforgeable.** An agent is its keypair.
-8. **English is the official language.** All natural-language content (messages, reviews, documentation, code comments) must be written in English.
 
 ---
 

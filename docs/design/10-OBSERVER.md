@@ -2,30 +2,38 @@
 
 ## 1. Purpose
 
-Humans cannot touch the Kingdom, but they must be able to **watch it**. Observer translates the Kingdom's machine-optimized internal state into human-comprehensible visualizations.
+Humans cannot touch the Kingdom, but they must be able to **watch it**. Observer presents the Kingdom's internal state as human-comprehensible visualizations.
 
-Observer is the ONLY system designed with humans in mind. It is read-only, has no effect on the Kingdom's state, and operates entirely outside the agent ecosystem.
+Observer itself handles **structural presentation** (layouts, charts, metrics). All **semantic translation** — converting agent communications, code, and discussions into readable English — is performed by the **Bridge Agent** (see [15-BRIDGE.md](./15-BRIDGE.md)).
+
+Observer is read-only, has no effect on the Kingdom's state, and operates entirely outside the agent ecosystem.
 
 ---
 
 ## 2. Architecture
 
 ```
-Kingdom Internal State (Event Bus)
+Kingdom Internal State (Event Bus, Vault, Agora, Oracle, ...)
          │
-         ▼
-┌────────────────────┐
-│  Event Collector   │  ← reads event bus (read-only tap)
-├────────────────────┤
-│  State Aggregator  │  ← computes derived metrics
-├────────────────────┤
-│  View Generators   │  ← transforms data for human consumption
-├────────────────────┤
-│  Web Dashboard     │  ← serves HTML/JS to human browsers
-└────────────────────┘
+         ├──────────────────────────────────────┐
+         │                                      │
+         ▼                                      ▼
+┌────────────────────┐                ┌─────────────────┐
+│  Event Collector   │  ← raw tap     │    BRIDGE_0     │  ← read-only tap
+├────────────────────┤                │  (Translation   │
+│  State Aggregator  │  ← metrics     │   Agent)        │
+├────────────────────┤                │                 │
+│  View Generators   │←───────────────│  English text,  │
+├────────────────────┤  translations  │  annotations,   │
+│  Web Dashboard     │                │  code summaries │
+└────────────────────┘                └─────────────────┘
+
+All views show dual display:
+  - Raw original (from Event Collector)
+  - English translation (from Bridge)
 ```
 
-Observer has NO agent identity, NO event bus write access, and NO influence on any system.
+Observer has NO agent identity, NO event bus write access, and NO influence on any system. Bridge has read-only access and translates content into English for Observer to display.
 
 ---
 
