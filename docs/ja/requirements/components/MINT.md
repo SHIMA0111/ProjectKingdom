@@ -2,7 +2,7 @@
 
 > エスクロー、ステーキング、経済監視を備えた通貨台帳。
 > クレート: `kingdom-mint`
-> デザイン参照: [../design/06-MINT.md](../../design/06-MINT.md)
+> デザイン参照: [06-MINT.md](../../design/06-MINT.md)
 
 ---
 

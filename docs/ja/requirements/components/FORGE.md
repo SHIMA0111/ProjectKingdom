@@ -2,7 +2,7 @@
 
 > 決定論的でティック計測される実行のためのカスタムレジスタベース仮想マシン。
 > クレート: `kingdom-forge`
-> デザイン参照: [../design/05-FORGE.md](../../design/05-FORGE.md)
+> デザイン参照: [05-FORGE.md](../../design/05-FORGE.md)
 
 ---
 

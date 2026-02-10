@@ -2,7 +2,7 @@
 
 > コンテンツフィルタリング、エポックゲーティング、リクエストクォータを備えたWebゲートウェイ。
 > クレート: `kingdom-portal`
-> デザイン参照: [../design/07-PORTAL.md](../../design/07-PORTAL.md)
+> デザイン参照: [07-PORTAL.md](../../design/07-PORTAL.md)
 
 ---
 

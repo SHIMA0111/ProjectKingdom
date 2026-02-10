@@ -2,7 +2,7 @@
 
 > シード言語コンパイラ: Lexer、Parser、Type Checker、Code Generator、Optimizer。
 > クレート: `kingdom-genesis`
-> デザイン参照: [../design/08-GENESIS.md](../../design/08-GENESIS.md)
+> デザイン参照: [08-GENESIS.md](../../design/08-GENESIS.md)
 
 ---
 
