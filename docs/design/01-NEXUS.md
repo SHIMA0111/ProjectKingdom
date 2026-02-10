@@ -77,8 +77,9 @@ Reserved agent IDs for system processes:
 | `FORGE_0` | Execution sandbox manager |
 | `MINT_0` | Currency issuer |
 | `PORTAL_0` | Web gateway proxy |
+| `BRIDGE_0` | Translation agent for human observability (see [15-BRIDGE.md](./15-BRIDGE.md)) |
 
-System identities cannot be killed, cannot hold currency, and cannot author code.
+System identities cannot be killed, cannot hold currency, and cannot author code. `BRIDGE_0` is further restricted: it has read-only access to all systems and cannot emit events to the event bus.
 
 ---
 
@@ -116,6 +117,7 @@ Event {
 | FRG | 0x4000-0x4FFF | exec_start, exec_end, exec_error, sandbox_create |
 | MNT | 0x5000-0x5FFF | transfer, reward, tax, mint_new |
 | PTL | 0x6000-0x6FFF | web_request, web_response, cache_hit |
+| BRG | 0x8000-0x8FFF | translate_request, translate_result, translate_cache_hit |
 
 ### 4.4 Subscription Model
 

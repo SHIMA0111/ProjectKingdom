@@ -92,7 +92,7 @@ Humans cannot specify agent count, select models, or assign roles. None of these
 
 ### 4.1 Available Resource Discovery
 
-At boot, NEXUS **probes** the API keys received from Summoner:
+At boot, NEXUS **probes** the API keys received from Summoner. Note: 10% of the total budget is reserved for the Bridge Agent's translation operations (see [15-BRIDGE.md](./15-BRIDGE.md)).
 
 ```
 ProbeResult {
@@ -446,7 +446,7 @@ This allows the Kingdom to function as a **public good sustained by multiple pat
 
 ## 8. Security
 
-API key management is handled by **Keyward** ([14-KEYWARD.md](./14-KEYWARD.md)). Summoner itself does not hold keys.
+API key management is handled by **Keyward** ([14-KEYWARD.md](./14-KEYWARD.md)). Summoner itself does not hold keys. All CLI commands (`kingdom start`, `kingdom pause`, `kingdom resume`, `kingdom fuel`) pass through Keyward for key registration, encryption, and sponsor identity management before reaching NEXUS.
 
 | Risk | Mitigation | Owner |
 |------|-----------|-------|

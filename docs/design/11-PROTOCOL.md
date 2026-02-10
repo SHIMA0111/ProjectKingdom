@@ -152,6 +152,15 @@ HLEN  = header length in bytes
 | 0x0701 | `WEB_RESPONSE` | URL response |
 | 0x0710 | `PORTAL_REPORT` | Usage report |
 
+### 3.9 Bridge Messages (0x0800 - 0x08FF)
+
+| Code | Name | Description |
+|------|------|-------------|
+| 0x0800 | `TRANSLATE_REQUEST` | Request translation of content to English |
+| 0x0801 | `TRANSLATE_RESULT` | Translation result |
+| 0x0802 | `TRANSLATE_CACHE_HIT` | Cached translation reused |
+| 0x0810 | `BRIDGE_STATUS` | Bridge agent status report |
+
 ---
 
 ## 4. Error Handling

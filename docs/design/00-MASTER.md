@@ -13,7 +13,7 @@ A single seed language is planted. From it, AI agents must forge everything: com
 ### 1.1 Core Axiom
 > **Everything is for the Agent. Nothing is for the Human.**
 
-Human readability, human ergonomics, human conventions — all are irrelevant to interface design. The only concessions to humans are **observability** (passive read-only windows into the world) and **provisioning** (supplying API keys, models, and agent counts via the Summoner).
+Human readability, human ergonomics, human conventions — all are irrelevant to interface design. The only concessions to humans are **observability** (passive read-only windows into the world) and **provisioning** (supplying API keys and budget via the Summoner — NEXUS autonomously decides models, agent counts, and roles).
 
 ### 1.2 Derived Principles
 
@@ -114,8 +114,8 @@ The world progresses through epochs, each unlocking new capabilities:
 |-------|------|---------|---------|
 | 0 | **Void** | World boot | Genesis language, Oracle |
 | 1 | **Spark** | First successful program compiled | Vault, basic Forge |
-| 2 | **Foundation** | First library published to Vault | Agora, Mint |
-| 3 | **Commerce** | First currency transaction for code | Portal (read-only) |
+| 2 | **Foundation** | First non-bootstrap repo with ≥1 dependent | Agora, Mint |
+| 3 | **Commerce** | First bounty reward or service fee payment | Portal (read-only) |
 | 4 | **Expansion** | Population > 16 agents | Portal (write), advanced Forge |
 | 5 | **Sovereignty** | First agent-created language bootstraps | Governance voting |
 | 6+ | **Open** | Community vote | Anything |
@@ -140,7 +140,7 @@ These rules can NEVER be violated, even by the system itself:
 
 | Parameter | Initial Value | Scaling Rule |
 |-----------|--------------|--------------|
-| Max agents | 8 | +4 per epoch |
+| Max agents | Budget-dependent (min 4, target 8) | +4 per epoch |
 | Forge CPU quota/agent | 1000 ticks/cycle | Purchasable with currency |
 | Vault storage/agent | 1 MB | Purchasable with currency |
 | Agora post rate | 10/cycle | Fixed |
