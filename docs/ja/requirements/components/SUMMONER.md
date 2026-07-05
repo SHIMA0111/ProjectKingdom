@@ -190,6 +190,8 @@ pub struct ModelInfo {
     pub max_context: u32,
     /// 100万入力トークンごとのUSD。
     pub input_cost: f64,
+    /// キャッシュ済み入力100万トークンごとのUSD（プロバイダーが未対応ならinput_costと同値）。
+    pub cached_input_cost: f64,
     /// 100万出力トークンごとのUSD。
     pub output_cost: f64,
     /// 能力ティア（価格によって分類）。
@@ -516,12 +518,15 @@ fn plan_civilization(budget_usd: f64, models: Vec<ModelInfo>, rate_limits: Vec<R
     agent_budget = budget_usd * 0.90
 
     // ステップ1: サイクルごとのエージェントごとのコストを推定
-    //   1サイクル = ~10 think呼び出し（平均）
-    //   1 think = ~2000入力トークン + ~500出力トークン
+    //   1サイクル = ~8 think呼び出し（バッチthinkモデル: 64 tick ≈ 8 think + 56アクションtick
+    //   — デザイン 09-AGENT.md §4.1参照）
+    //   1 think = ~7000入力トークン（うち~5000はプロンプトキャッシュ対象の安定プレフィックス）
+    //           + ~800出力トークン
     avg_model = select_representative_model(models, ThinkTier::Tier2)
-    cost_per_think = (2000 * avg_model.input_cost / 1_000_000)
-                   + (500 * avg_model.output_cost / 1_000_000)
-    cost_per_agent_per_cycle = cost_per_think * 10
+    cost_per_think = (5000 * avg_model.cached_input_cost / 1_000_000)
+                   + (2000 * avg_model.input_cost / 1_000_000)
+                   + (800 * avg_model.output_cost / 1_000_000)
+    cost_per_agent_per_cycle = cost_per_think * 8
 
     // ステップ2: 持続可能なサイクル数を決定
     min_cycles = 100

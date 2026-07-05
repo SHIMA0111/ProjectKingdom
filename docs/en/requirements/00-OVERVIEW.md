@@ -222,6 +222,7 @@ cargo run --bin kingdom -- start --budget 50.00 --key ANTHROPIC_API_KEY=sk-ant-.
 | `OBSERVER_UI_DIR` | No | `./observer-ui/dist` | Static files for React frontend |
 | `RUST_LOG` | No | `info` | Log level filter |
 | `EVENT_LOG_PATH` | No | `./data/events` | Event bus WAL directory |
+| `SEALED_INPUT_PATH` | No | `./data/sealed` | Sealed external input store (LLM/web responses — design 01-NEXUS.md §4.5) |
 
 ---
 

@@ -53,14 +53,20 @@ chrono = { workspace = true }
 ### 3.1 定数
 
 ```rust
-/// ジェネシス時の初期総供給量。
-pub const INITIAL_SUPPLY: u64 = 10_000;
-
 /// MINT_0が保有する財務省準備金。
 pub const TREASURY_RESERVE: u64 = 5_000;
 
 /// 新しくスポーンされた各エージェントに与えられる助成金。
 pub const AGENT_INITIAL_GRANT: u64 = 100;
+
+/// 初期エージェント1体あたりのスポーン/インフレ用リザーブ。
+pub const SPAWN_RESERVE_PER_AGENT: u64 = 500;
+
+/// ジェネシス時の初期総供給量。初期エージェント数Nに応じてスケールする
+/// （デザイン 06-MINT.md §2.1。例: N=8 → 9,800）。
+pub fn initial_supply(n_agents: u64) -> u64 {
+    TREASURY_RESERVE + (AGENT_INITIAL_GRANT + SPAWN_RESERVE_PER_AGENT) * n_agents
+}
 
 /// インフレ率: エポックごとに財務省に鋳造される新しいSpark（分数）。
 pub const INFLATION_RATE_NUM: u64 = 2;
@@ -75,6 +81,17 @@ pub const TAX_MINIMUM: u64 = 1;
 pub const BANKRUPTCY_WARNING_CYCLES: u64 = 3;     // サイクル1-3: 50%予算
 pub const BANKRUPTCY_SEVERE_CYCLE: u64 = 4;        // サイクル4: 25%予算
 pub const BANKRUPTCY_DEAD_CYCLE: u64 = 5;          // サイクル5: エージェントDEAD
+/// 若齢保護: 生成からこのサイクル数未満のエージェントは破産でDEADにならず
+/// DORMANTに遷移する（デザイン 06-MINT.md §2.3）。
+pub const BANKRUPTCY_GRACE_CYCLES: u64 = 20;
+
+/// ファーミング耐性（デザイン 06-MINT.md §5.3）。
+pub const REVIEW_REWARD_CAP_PER_CYCLE: u32 = 3;
+pub const BUG_REPORT_CAP_PER_CYCLE: u32 = 3;
+pub const ORACLE_VERIFY_CAP_PER_CYCLE: u32 = 3;
+pub const VERIFIER_MIN_REPUTATION: f32 = 0.4;
+pub const MUTUAL_PAIR_DECAY: f32 = 0.5;            // k回目の相互報酬 = 基本額 × 0.5^(k-1)
+pub const OVERTURNED_REVIEW_SLASH_MULTIPLIER: u64 = 2;
 
 /// ステーキング結果。
 pub const STAKE_WIN_BONUS_PERCENT: u64 = 10;       // 財務省から+10%

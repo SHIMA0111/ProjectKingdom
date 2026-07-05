@@ -61,7 +61,7 @@ CREATE TABLE nexus.agents (
     spawn_tick      BIGINT NOT NULL,            -- tick at which agent was created
     spawn_epoch     INTEGER NOT NULL,           -- epoch at which agent was created
     role            SMALLINT NOT NULL,          -- 0=Generalist, 1=CompilerSmith, 2=Librarian, 3=Architect, 4=Explorer
-    reputation      REAL NOT NULL DEFAULT 0.0,  -- [0.0, 1.0]
+    reputation      REAL NOT NULL DEFAULT 0.5,  -- [0.0, 1.0], starts from the neutral prior 0.5 (design 01-NEXUS.md §6.3)
     status          SMALLINT NOT NULL DEFAULT 0,-- 0=EMBRYO, 1=ACTIVE, 2=DORMANT, 3=DEAD
     parent_id       BYTEA REFERENCES nexus.agents(id),  -- sponsoring agent (NULL for system spawns)
     genome          BYTEA,                      -- LLM system prompt / personality seed
@@ -92,7 +92,8 @@ CREATE TABLE nexus.epochs (
 CREATE TABLE nexus.cycles (
     id              BIGINT PRIMARY KEY,        -- cycle number
     start_tick      BIGINT NOT NULL,           -- first tick of this cycle
-    end_tick        BIGINT NOT NULL,           -- last tick of this cycle (start_tick + 255)
+    end_tick        BIGINT NOT NULL,           -- last tick of this cycle (variable length — when every active
+                                               -- agent has consumed/yielded its budget; design 01-NEXUS.md §2.1)
     epoch_id        INTEGER NOT NULL REFERENCES nexus.epochs(id),
     world_hash      BYTEA NOT NULL,            -- 32 bytes, sha256 of all component state hashes
     nexus_hash      BYTEA NOT NULL,            -- 32 bytes, nexus state hash
@@ -274,7 +275,9 @@ pub trait Nexus: Send + Sync {
     /// Returns the new tick number.
     async fn advance_tick(&self) -> Result<u64, NexusError>;
 
-    /// Check if the current tick completes a cycle (tick % 256 == 255).
+    /// Check if the current tick completes a cycle
+    /// (i.e. every active agent has consumed or yielded its tick budget;
+    ///  cycles are not fixed-length — see design 01-NEXUS.md §2.1).
     fn is_cycle_boundary(&self) -> bool;
 
     // ── Identity ──────────────────────────────────────────────────────

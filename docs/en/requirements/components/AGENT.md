@@ -428,17 +428,27 @@ pub struct ThinkContext {
     pub is_simple_decision: bool,
 }
 
-/// Structured action response parsed from LLM output.
+/// Maximum number of actions one think may return in its batch (design 09-AGENT.md §4.1).
+pub const THINK_BATCH_MAX: usize = 8;
+
+/// Structured response parsed from LLM output (1 think = 1 LLM call).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkOutput {
+    /// Action batch executed in order (up to THINK_BATCH_MAX entries).
+    pub actions: Vec<AgentAction>,
+    /// Internal reasoning (stored in memory, not broadcast).
+    pub reasoning: String,
+    /// Updates to persistent memory.
+    pub memory_update: Option<serde_json::Value>,
+}
+
+/// A single action within a batch.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentAction {
     /// The action to execute.
     pub action: String,
     /// Action parameters.
     pub params: serde_json::Value,
-    /// Internal reasoning (stored in memory, not broadcast).
-    pub reasoning: String,
-    /// Updates to persistent memory.
-    pub memory_update: Option<serde_json::Value>,
 }
 ```
 
@@ -496,9 +506,9 @@ pub trait AgentRuntime: Send + Sync {
         parent: Option<AgentId>,
     ) -> Result<AgentId, AgentError>;
 
-    /// Execute one tick of the OODA loop for the given agent.
-    /// Returns the action taken (or None if NOP).
-    async fn tick(&self, agent_id: &AgentId) -> Result<Option<AgentAction>, AgentError>;
+    /// Execute one think (one OODA pass + action batch execution) for the given agent.
+    /// Returns the executed ThinkOutput (or None if NOP).
+    async fn think(&self, agent_id: &AgentId) -> Result<Option<ThinkOutput>, AgentError>;
 
     /// Run a full cycle (all allocated ticks) for the given agent.
     async fn run_cycle(&self, agent_id: &AgentId, tick_budget: u64) -> Result<(), AgentError>;
@@ -622,8 +632,9 @@ Agents do not directly publish custom events to the event bus. All agent-observa
 
 | Metric | Target | Notes |
 |--------|--------|-------|
-| OODA loop latency (excluding LLM call) | < 5 ms per tick | In-process event processing + memory update |
+| OODA loop latency (excluding LLM call) | < 5 ms per think | In-process event processing + memory update |
 | LLM call latency budget | 1-30 s per think | Depends on model tier and provider |
+| Think frequency | ~8 per agent per cycle | Batch-think model (THINK_BATCH_MAX = 8) |
 | Agent memory persist (flush) | < 50 ms | Batched PostgreSQL writes |
 | Agent load from database | < 20 ms | Single agent full state load |
 | Goal prioritization | < 1 ms | Pure computation, no I/O |
@@ -745,13 +756,13 @@ CREATE INDEX idx_goals_agent_layer ON agent.goals(agent_id, layer);
 
 ## 10. Key Algorithms
 
-### 10.1 OODA Loop (Per-Tick)
+### 10.1 OODA Loop (Per-Think — Batch-Think Model)
 
-Each tick, an active agent executes:
+The unit of agent cognition is the **think** (1 think = 1 LLM call = 1 tick). One think returns a batch plan of up to THINK_BATCH_MAX (= 8) actions, which the runtime then executes in order:
 
 ```
 1. OBSERVE
-   - Read all subscribed events since last tick from the event bus.
+   - Read all subscribed events since the last think from the event bus.
    - Fetch current world state (cycle, epoch, tick position).
    - Check balance and reputation.
 
@@ -765,22 +776,23 @@ Each tick, an active agent executes:
 3. DECIDE
    - Select highest-priority goal from the stack.
    - If the goal requires a plan and none exists, create a plan.
-   - Select the next action from the current plan step.
    - Classify the think tier (TIER_1/TIER_2/TIER_3).
    - Build the LLM prompt (system + identity + memory + state + actions).
 
 4. ACT
-   - Send LLM request via Nexus -> Keyward.
-   - Parse the structured JSON response into AgentAction.
+   - Send LLM request via Nexus -> Keyward (consumes 1 tick).
+   - Parse the structured JSON response into a ThinkOutput (action batch).
    - On parse failure: retry up to 2 times, then NOP.
-   - Execute the action by sending the appropriate KDOM message.
-   - Consume 1 tick from the budget.
+   - Execute each action in the batch in order (each action consumes 1 tick).
+   - On a fault or interrupting event, discard the rest of the batch and go to the next think.
 
 5. RECORD
-   - Create an Experience from the action and its outcome.
+   - Create an Experience from each action and its outcome.
    - Update working memory.
    - Persist memory updates to PostgreSQL (batched at cycle end).
 ```
+
+The base budget of 64 ticks/cycle corresponds to roughly 8 thinks + 56 action ticks.
 
 ### 10.2 Goal Prioritization
 
@@ -842,13 +854,16 @@ fn classify_think(agent: &Agent, context: &ThinkContext) -> ThinkTier {
 
 ```
 Total tokens: model.max_context
-Allocation:
+Allocation (stable prefix first — so it hits the prompt cache):
+    // Stable prefix (cache-eligible, ~5000 tokens total)
     system_prompt:    ~2000 tokens (WORLD RULES - fixed)
     identity:         ~500  tokens (YOUR IDENTITY - agent_id, role, traits, rep, balance)
-    memory:           ~2000 tokens (YOUR MEMORY - compressed working + relevant long-term)
+    memory:           ~2000 tokens (YOUR MEMORY - compressed working + relevant long-term; stable within a cycle)
+    action_schema:    ~500  tokens (AVAILABLE ACTIONS + RESPONSE FORMAT - fixed)
+    // Variable part (changes every think, ~2000 tokens total)
     world_state:      ~1500 tokens (CURRENT STATE - cycle, tick, epoch, recent events)
-    action_history:   ~1000 tokens (recent actions for continuity)
-    response_budget:  remainder   (AVAILABLE ACTIONS + RESPONSE FORMAT + model output)
+    action_history:   ~500  tokens (recent actions for continuity)
+    response_budget:  remainder   (model output; ~800 tokens assumed)
 ```
 
 ### 10.7 Response Parse Failure Escalation
@@ -862,6 +877,8 @@ Allocation:
 ```
 
 ### 10.8 Initial Population (Epoch 0)
+
+The initial agent count N is decided autonomously by NEXUS from budget (min 4 — see SUMMONER.md §9.1). Roles are distributed by the fixed ratios of SUMMONER.md §9.2, with traits sampled around role archetypes. The following is an **example composition for N=8**:
 
 ```
 Agent 1: COMPILER_SMITH  -- traits: {risk: 0.3, collab: 0.5, depth: 0.2, quality: 0.2}

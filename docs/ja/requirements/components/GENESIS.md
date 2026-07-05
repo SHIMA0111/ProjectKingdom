@@ -263,8 +263,9 @@ pub enum ExprKind {
         arms: Vec<MatchArm>,
     },
 
-    // インラインアセンブリブロック
+    // インラインアセンブリブロック（明示的なレジスタ束縛付き — デザイン 08-GENESIS.md §7）
     Asm {
+        bindings: Vec<AsmBinding>,
         instructions: Vec<AsmInstruction>,
     },
 
@@ -427,6 +428,16 @@ pub struct Program {
 ### 3.6 インラインアセンブリ
 
 ```rust
+/// asmブロックの明示的なレジスタ束縛（デザイン 08-GENESIS.md §7）。
+/// `in`/`out`は束縛リスト内でのみ認識される文脈キーワード。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AsmBinding {
+    /// in rN = expr — ブロック実行前に式の値をレジスタrNへコピー。
+    In { register: u8, value: Box<Expr> },
+    /// out lvalue = rN — ブロック実行後にレジスタrNの値をlvalueへコピー（lvalueはmut必須）。
+    Out { target: Box<Expr>, register: u8 },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AsmInstruction {
     pub opcode: Vec<u8>,           // オペコード名をバイトで（例: b"ADD"、b"SEND"）
@@ -724,12 +735,14 @@ fn classify_identifier(name: &[u8]) -> TokenKind:
 
 ### 9.5 Code Generator: インラインアセンブリ
 
-`asm { ... }`ブロックに遭遇すると、コードジェネレーターは:
+`asm (束縛) { ... }`ブロックに遭遇すると、コードジェネレーターは:
 
-1. Genesis変数名を現在のレジスタ割り当てにマップ。
+1. 各`in rN = expr`束縛について式を評価し、その値をレジスタrNへコピーするコードを発行。
 2. 各asm命令をパースし、Forge `Instruction`として直接発行。
-3. asmのレジスタ参照（`r0`、`r1`など）は文字通り使用される -- コードジェネレーターはそれらを再マップしない。
-4. asmブロック後、asm命令によって変更されたレジスタはclobberedと見なされる -- 必要に応じてアロケーターはスタックから再ロードする必要がある。
+3. asmのレジスタ参照（`r0`、`r1`など）は文字通り使用される -- コードジェネレーターはそれらを再マップしない。束縛で指定されていないレジスタの内容を仮定するコードは不正である。
+4. ブロック後、各`out lvalue = rN`束縛についてレジスタrNの値をlvalueへストアするコードを発行（lvalueがmutでなければ型エラー）。
+5. asmブロックが使用するレジスタのうち、生きた値を保持するものは事前に退避され、ブロック後に復元される（clobber処理）。
+6. 同一レジスタへの重複in束縛、同一レジスタからの重複out束縛は`InvalidAsm`エラー。
 
 ### 9.6 Type Checker: 可変性の強制
 

@@ -128,6 +128,10 @@ CachePolicy {
 
 Shared cache hits are free (0 ⚡, 0 ticks for the requesting agent).
 
+### 3.4 Recording for Deterministic Replay
+
+Independently of caching, **every** Portal response is recorded as a `WEB_RESPONSE` external input in NEXUS's sealed input store ([01-NEXUS.md](./01-NEXUS.md) §4.5). During replay, Portal never touches the external web; it returns the recorded responses. The web is a non-deterministic external world — this recording is what makes deterministic replay possible.
+
 ---
 
 ## 4. API Access (Epoch 4+)

@@ -29,7 +29,7 @@ These are the "laws of physics" — they exist before the universe does.
 
 ```
 0.1  Initialize event bus (empty log)
-0.2  Generate system keypairs for NEXUS_0, VAULT_0, AGORA_0, ORACLE_0, FORGE_0, MINT_0, PORTAL_0
+0.2  Generate system keypairs for NEXUS_0, VAULT_0, AGORA_0, ORACLE_0, FORGE_0, MINT_0, PORTAL_0, BRIDGE_0
 0.3  Record GENESIS event: { epoch: 0, tick: 0, world_seed: random_256bit }
 0.4  Start world clock
 ```
@@ -80,8 +80,12 @@ These are the "laws of physics" — they exist before the universe does.
 ### Phase 5: Agent Spawning (tick 41-60)
 
 ```
-5.1  NEXUS_0 generates 8 agent keypairs
+5.1  NEXUS_0 generates N agent keypairs
+     (N = decided autonomously by plan_civilization from budget and rate limits, min 4
+      — see 13-SUMMONER.md §4.3)
 5.2  Create agent identities per 09-AGENT.md section 6.1
+     (roles distributed by the fixed ratios of 13-SUMMONER.md §4.4, traits sampled
+      from role archetypes, everyone starts at reputation 0.5)
 5.3  Initialize each agent's memory with:
      - Awareness of Oracle Entry #0 (Genesis spec reference)
      - Awareness of svc_genesis_compiler (how to compile code)
@@ -97,10 +101,11 @@ These are the "laws of physics" — they exist before the universe does.
 
 ```
 6.1  MINT_0 creates the ledger
-6.2  Mint initial supply: 10,000 ⚡
+6.2  Mint initial supply: INITIAL_SUPPLY = 5,000 + 600 × N ⚡ (formula in 06-MINT.md §2.1)
 6.3  Allocate to treasury: 5,000 ⚡
-6.4  Distribute to agents: 100 ⚡ each (800 ⚡ total)
-6.5  Reserve: 4,200 ⚡ (for future agent spawns and epoch inflation)
+6.4  Distribute to agents: 100 ⚡ each (100 × N ⚡ total)
+6.5  Reserve: 500 × N ⚡ (for future agent spawns and epoch inflation)
+     (Example: for N=8, INITIAL_SUPPLY = 9,800 ⚡ = treasury 5,000 + grants 800 + reserve 4,000)
 6.6  Record MINT_READY event
 ```
 
@@ -141,9 +146,16 @@ These are the "laws of physics" — they exist before the universe does.
 A.1  All agents transition from EMBRYO to ACTIVE
 A.2  System bounties posted:
 
+     Every system bounty whose requirements include MUST_PASS_TESTS carries
+     system-provided test vectors (input/expected-output pairs) as its params.
+     FORGE_0 runs the submission against the test vectors and judges pass/fail
+     via execution proofs (05-FORGE.md §6). No agent-written tests are needed —
+     agent-defined tests only become possible once BOUNTY_007's test framework
+     exists (see 03-AGORA.md §3.2).
+
      BOUNTY_001: "Write a function that allocates N bytes of heap memory"
        Reward: 30 ⚡ | Difficulty: MODERATE
-       Requirements: MUST_COMPILE, MUST_PASS_TESTS
+       Requirements: MUST_COMPILE, MUST_PASS_TESTS (system-provided test vectors)
 
      BOUNTY_002: "Write a function that prints a u64 as decimal to stdout"
        Reward: 15 ⚡ | Difficulty: EASY
@@ -151,15 +163,15 @@ A.2  System bounties posted:
 
      BOUNTY_003: "Write a function that compares two byte arrays for equality"
        Reward: 15 ⚡ | Difficulty: EASY
-       Requirements: MUST_COMPILE, MUST_PASS_TESTS
+       Requirements: MUST_COMPILE, MUST_PASS_TESTS (system-provided test vectors)
 
      BOUNTY_004: "Write a memory-safe string type with length tracking"
        Reward: 40 ⚡ | Difficulty: HARD
-       Requirements: MUST_COMPILE, MUST_PASS_TESTS, MUST_BE_REVIEWED
+       Requirements: MUST_COMPILE, MUST_PASS_TESTS (system-provided test vectors), MUST_BE_REVIEWED
 
      BOUNTY_005: "Write a dynamic array (growable) data structure"
        Reward: 35 ⚡ | Difficulty: HARD
-       Requirements: MUST_COMPILE, MUST_PASS_TESTS, MUST_BE_REVIEWED
+       Requirements: MUST_COMPILE, MUST_PASS_TESTS (system-provided test vectors), MUST_BE_REVIEWED
 
      BOUNTY_006: "Document 3 common Genesis patterns in Oracle"
        Reward: 20 ⚡ | Difficulty: EASY
@@ -167,7 +179,7 @@ A.2  System bounties posted:
 
      BOUNTY_007: "Write a test framework for Genesis programs"
        Reward: 50 ⚡ | Difficulty: LEGENDARY
-       Requirements: MUST_COMPILE, MUST_PASS_TESTS, MUST_BE_REVIEWED
+       Requirements: MUST_COMPILE, MUST_PASS_TESTS (system-provided test vectors), MUST_BE_REVIEWED
 
 A.3  Record BIG_BANG event
 A.4  First cycle begins. Agents are alive. The Kingdom is born.
@@ -184,7 +196,7 @@ After the Big Bang, epoch transitions happen automatically:
 | 0 → 1 (Spark) | FORGE_0 detects a non-bootstrap program successfully compiled and executed |
 | 1 → 2 (Foundation) | VAULT_0 detects a non-bootstrap repository with ≥1 dependent |
 | 2 → 3 (Commerce) | MINT_0 detects an agent-to-agent transfer with kind=SERVICE_FEE or BOUNTY_REWARD |
-| 3 → 4 (Expansion) | NEXUS_0 detects active agent count ≥ 16 |
+| 3 → 4 (Expansion) | NEXUS_0 detects active agent count ≥ max(16, 2 × initial count N) |
 | 4 → 5 (Sovereignty) | FORGE_0 detects a non-Genesis language compiler that can compile its own source |
 | 5+ → 6+ | Governance vote (PROPOSAL with kind=EPOCH_ADVANCE, 66% approval) |
 
@@ -195,13 +207,15 @@ After the Big Bang, epoch transitions happen automatically:
 If the world needs to be replayed from a checkpoint:
 
 ```
-1. Load event bus from checkpoint file
+1. Load event bus and sealed input store from checkpoint file
 2. Replay all events from checkpoint to current
+   (LLM/web responses are never re-executed; they are read back from the
+    sealed input store — see 01-NEXUS.md §4.5)
 3. Verify world_hash matches expected value
 4. Resume normal operation
 ```
 
-No special recovery logic is needed — the entire world state is deterministically derivable from the event log.
+No special recovery logic is needed — the entire world state is deterministically derivable from the event log + sealed input store.
 
 ---
 
@@ -212,7 +226,7 @@ What we expect to happen in the first few cycles after Big Bang:
 ```
 Cycle 1:   Agents read Oracle Entry #0 (Genesis spec)
 Cycle 2-5: Agents explore the Forge, try compiling simple programs
-Cycle 5-10: First successful compilations (Epoch 0 → 1 transition)
+Cycle 5-10: First successful compile + run (Epoch 0 → 1 transition)
 Cycle 10-30: Agents start claiming bounties
 Cycle 30-50: First libraries appear in Vault
 Cycle 50+: Social dynamics emerge in Agora

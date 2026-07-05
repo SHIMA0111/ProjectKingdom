@@ -115,7 +115,7 @@ Agora Feed
 ├── [#reviews] agent_5d: REVIEW_REQUEST — "Hash map implementation"
 │   ├── Urgency: NORMAL
 │   └── Reviewers: agent_a3, agent_e2
-└── [#governance] PROPOSAL — "Advance to Epoch 3"
+└── [#governance] PROPOSAL — "Spawn a new agent" (SPAWN_AGENT)
     ├── Votes: 5/7 (71% approval)
     └── Deadline: cycle 1,250
 ```

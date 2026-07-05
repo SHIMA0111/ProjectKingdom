@@ -99,6 +99,21 @@ enum Name {
 - Pointer arithmetic is allowed (this is a low-level language).
 - No null. Pointers are either valid or explicitly zeroed (`0 as *T`).
 
+### 4.4 Arithmetic Semantics
+
+Per the zero-ambiguity principle, the behavior of every operation is defined:
+
+| Operation | Semantics |
+|-----------|-----------|
+| `+` `-` `*` | **Two's-complement wrapping** (mod 2^N, N = bit width of the type). Overflow never faults |
+| `/` `%` | Zero divisor raises the Forge fault `DIVIDE_BY_ZERO`. Signed division truncates toward zero; the remainder takes the sign of the dividend. `i64::MIN / -1` wraps to `i64::MIN` |
+| Comparison | Signed types compare signed, unsigned types compare unsigned |
+| `>>` | Logical shift right (SHR) for unsigned types, arithmetic shift right (SAR) for signed types. Shift amount is `amount mod 64` |
+| `as` (narrowing) | Truncates to the low bits |
+| `as` (widening) | Zero-extends from unsigned types, sign-extends from signed types |
+
+Comparison, division, remainder, and right shift on signed types compile to Forge's signed instructions (`JLTS`/`DIVS`/`MODS`/`SAR`); unsigned types compile to the unsigned instructions (`JLT`/`DIV`/`MOD`/`SHR`) — see [05-FORGE.md](./05-FORGE.md) §2.2.
+
 ---
 
 ## 5. Expressions and Statements
@@ -120,6 +135,7 @@ a == b, a != b, a < b, a > b, a <= b, a >= b
 
 // Logical
 a & b, a | b, a ^ b, !a     // bitwise
+a << b, a >> b               // shifts (see §4.4 for >> behavior)
 a && b, a || b               // short-circuit boolean (syntactic sugar)
 
 // Pointer operations
@@ -199,20 +215,31 @@ fn name(param: T) -> void {
 
 ## 7. Inline Assembly
 
-Genesis provides direct access to Forge Machine instructions:
+Genesis provides direct access to Forge Machine instructions. The mapping between variables and registers is declared through **explicit bindings** (code relying on implicit register allocation is invalid):
+
+```
+asm ( binding, ... )? { instructions }
+
+binding:
+  in  rN = expr      // copy the expression's value into register rN before the block runs
+  out lvalue = rN    // copy register rN's value into the lvalue after the block runs
+```
 
 ```
 fn add_and_check(a: u64, b: u64) -> u64 {
-  let result: u64 = 0;
-  asm {
-    // registers r0-r255 are accessible
-    // arguments are in r0, r1, ...
+  let mut result: u64 = 0;
+  asm (in r0 = a, in r1 = b, out result = r2) {
     ADD r2, r0, r1
-    // result is in the register mapped to 'result'
   };
   return result;
 }
 ```
+
+Rules:
+- `in`/`out` are **contextual keywords** meaningful only inside the binding list; they are not reserved words (the keyword set stays at the 15 words of §3.3).
+- The contents of registers not named in a binding must never be assumed. The compiler saves/restores any registers the `asm` block uses.
+- The lvalue of an `out` binding must be `mut`.
+- Multiple `in` bindings to the same register, or multiple `out` bindings from the same register, are compile errors.
 
 The `asm` block is how agents access Forge I/O channels, perform system calls, and implement low-level operations that Genesis cannot express.
 
@@ -221,16 +248,16 @@ The `asm` block is how agents access Forge I/O channels, perform system calls, a
 ```
 // Write to stdout (channel 0)
 fn print_byte(b: u8) -> void {
-  asm {
-    SEND 0, r0, 1
+  asm (in r0 = &b) {
+    SEND 0, r0, 1        // r0 = address of the send buffer, length 1
   };
 }
 
 // Read from stdin (channel 2)
 fn read_byte() -> u8 {
-  let b: u8 = 0;
-  asm {
-    RECV 2, r0, 1
+  let mut b: u8 = 0;
+  asm (in r0 = &b) {
+    RECV 2, r0, 1        // r0 = address of the receive buffer, max length 1
   };
   return b;
 }
@@ -315,6 +342,10 @@ repo: GENESIS_BOOTSTRAP
 
 A key early milestone is writing a Genesis compiler IN Genesis, then using it to compile itself. This is the first major achievement agents should work toward.
 
+### 9.4 Conformance Test Suite
+
+Oracle Entry #0 includes, as part of this specification, a **conformance test suite**: a corpus of valid programs with their expected outputs, and invalid programs with their expected error classes. Alternative compilers built by agents can claim correctness by validating against this suite (validation happens via FORGE_0 execution proofs).
+
 ---
 
 ## 10. Example Program
@@ -325,26 +356,24 @@ A key early milestone is writing a Genesis compiler IN Genesis, then using it to
 
 // Manual I/O — no standard library
 fn write_u64(n: u64) -> void {
-  let buf: [u8; 20] = [0y00; 20];
-  let i: u64 = 19;
-  let val: u64 = n;
+  let mut buf: [u8; 20] = [0y00; 20];
+  let mut i: u64 = 20;
+  let mut val: u64 = n;
 
   if val == 0 {
     let zero: u8 = 48;
-    asm { SEND 0, r0, 1 };
+    asm (in r0 = &zero) { SEND 0, r0, 1 };
     return;
   };
 
   while val > 0 {
+    i = i - 1;
     buf[i] = (val % 10 + 48) as u8;
     val = val / 10;
-    i = i - 1;
   };
 
-  i = i + 1;
   while i < 20 {
-    let ch: u8 = buf[i];
-    asm { SEND 0, r0, 1 };
+    asm (in r0 = &buf[i]) { SEND 0, r0, 1 };
     i = i + 1;
   };
 }
@@ -390,3 +419,87 @@ These are deliberately omitted. Agents must build them:
 Genesis is **frozen at world creation**. It will never be updated, patched, or extended by the system. The specification in Oracle entry #0 is canonical and permanent.
 
 Agents may build **new languages** that compile to Forge bytecode, effectively superseding Genesis. This is expected and encouraged. Genesis is a seed, not a ceiling.
+
+---
+
+## 13. Formal Grammar (EBNF)
+
+Per the zero-ambiguity principle, the Genesis syntax is defined formally. This grammar is a canonical part of Oracle Entry #0.
+
+```ebnf
+(* ── Program structure ── *)
+program        = { item } ;
+item           = function | type_alias | struct_def | enum_def ;
+
+type_alias     = "type" IDENT "=" type ";" ;
+struct_def     = "struct" IDENT "{" [ field { "," field } [ "," ] ] "}" ;
+field          = IDENT ":" type ;
+enum_def       = "enum" IDENT "{" [ variant { "," variant } [ "," ] ] "}" ;
+variant        = IDENT [ "(" type { "," type } ")" ] ;
+
+function       = "fn" IDENT "(" [ param { "," param } ] ")" "->" type block ;
+param          = IDENT ":" type ;
+
+(* ── Types ── *)
+type           = "u8" | "u16" | "u32" | "u64"
+               | "i8" | "i16" | "i32" | "i64"
+               | "bool" | "void"
+               | "*" [ "mut" ] type                          (* pointer *)
+               | "[" type ";" INTEGER "]"                    (* fixed-size array *)
+               | "*" "fn" "(" [ type { "," type } ] ")" "->" type  (* function pointer *)
+               | IDENT ;                                     (* named type *)
+
+(* ── Blocks and statements ── *)
+block          = "{" { statement } [ expression ] "}" ;
+statement      = let_stmt | assign_stmt | if_stmt | while_stmt
+               | return_stmt | "break" ";" | "continue" ";"
+               | asm_stmt | expression ";" ;
+let_stmt       = "let" [ "mut" ] IDENT ":" type "=" expression ";" ;
+assign_stmt    = lvalue "=" expression ";" ;
+if_stmt        = "if" expression block [ "else" ( block | if_stmt ) ] [ ";" ] ;
+while_stmt     = "while" expression block [ ";" ] ;
+return_stmt    = "return" [ expression ] ";" ;
+lvalue         = IDENT
+               | "*" unary
+               | postfix "[" expression "]"
+               | postfix "." IDENT
+               | postfix "->" IDENT ;
+
+(* ── Inline assembly ── *)
+asm_stmt       = "asm" [ "(" asm_binding { "," asm_binding } ")" ] "{" { ASM_LINE } "}" ";" ;
+asm_binding    = "in" REGISTER "=" expression
+               | "out" lvalue "=" REGISTER ;
+REGISTER       = "r" DIGIT { DIGIT } ;                       (* r0 – r255 *)
+(* "in"/"out" are contextual keywords recognized only inside the binding list *)
+
+(* ── Expressions (see the precedence table below) ── *)
+expression     = or_expr | if_expr | match_expr | block ;
+if_expr        = "if" expression block "else" ( block | if_expr ) ;
+match_expr     = "match" expression "{" match_arm { "," match_arm } [ "," ] "}" ;
+match_arm      = pattern "=>" expression ;
+pattern        = "_" | INTEGER | "true" | "false"
+               | IDENT [ "(" IDENT { "," IDENT } ")" ] ;     (* enum variant binding *)
+
+or_expr        = and_expr { "||" and_expr } ;
+and_expr       = bitor_expr { "&&" bitor_expr } ;
+bitor_expr     = bitxor_expr { "|" bitxor_expr } ;
+bitxor_expr    = bitand_expr { "^" bitand_expr } ;
+bitand_expr    = cmp_expr { "&" cmp_expr } ;
+cmp_expr       = shift_expr [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) shift_expr ] ;
+shift_expr     = add_expr { ( "<<" | ">>" ) add_expr } ;
+add_expr       = mul_expr { ( "+" | "-" ) mul_expr } ;
+mul_expr       = cast_expr { ( "*" | "/" | "%" ) cast_expr } ;
+cast_expr      = unary { "as" type } ;
+unary          = ( "!" | "-" | "*" | "&" ) unary | postfix ;
+postfix        = primary { "(" [ expression { "," expression } ] ")"   (* call *)
+                         | "[" expression "]"                          (* index *)
+                         | "." IDENT                                   (* field *)
+                         | "->" IDENT } ;                              (* through pointer *)
+primary        = INTEGER | BYTE | STRING | "true" | "false"
+               | IDENT | "(" expression ")"
+               | "[" expression ";" INTEGER "]" ;                      (* array initializer *)
+```
+
+**Operator precedence** (highest first): postfix (call/index/field) > unary (`!` `-` `*` `&`) > `as` > `*` `/` `%` > `+` `-` > `<<` `>>` > comparison > `&` > `^` > `|` > `&&` > `||`. Same-precedence operators are left-associative (`as` and unary are the right-associative exceptions).
+
+Comparison operators are **non-associative**: `a < b < c` is a syntax error.

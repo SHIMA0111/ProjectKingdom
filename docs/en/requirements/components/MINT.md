@@ -53,14 +53,20 @@ chrono = { workspace = true }
 ### 3.1 Constants
 
 ```rust
-/// Initial total supply at genesis.
-pub const INITIAL_SUPPLY: u64 = 10_000;
-
 /// Treasury reserve held by MINT_0.
 pub const TREASURY_RESERVE: u64 = 5_000;
 
 /// Grant given to each newly spawned agent.
 pub const AGENT_INITIAL_GRANT: u64 = 100;
+
+/// Spawn/inflation reserve per initial agent.
+pub const SPAWN_RESERVE_PER_AGENT: u64 = 500;
+
+/// Initial total supply at genesis. Scales with the initial agent count N
+/// (design 06-MINT.md §2.1; e.g. N=8 → 9,800).
+pub fn initial_supply(n_agents: u64) -> u64 {
+    TREASURY_RESERVE + (AGENT_INITIAL_GRANT + SPAWN_RESERVE_PER_AGENT) * n_agents
+}
 
 /// Inflation rate: new Spark minted into treasury per epoch (fraction).
 pub const INFLATION_RATE_NUM: u64 = 2;
@@ -75,6 +81,17 @@ pub const TAX_MINIMUM: u64 = 1;
 pub const BANKRUPTCY_WARNING_CYCLES: u64 = 3;     // cycles 1-3: 50% budget
 pub const BANKRUPTCY_SEVERE_CYCLE: u64 = 4;        // cycle 4: 25% budget
 pub const BANKRUPTCY_DEAD_CYCLE: u64 = 5;          // cycle 5: agent DEAD
+/// Youth protection: agents younger than this many cycles transition to
+/// DORMANT instead of DEAD on bankruptcy (design 06-MINT.md §2.3).
+pub const BANKRUPTCY_GRACE_CYCLES: u64 = 20;
+
+/// Farming resistance (design 06-MINT.md §5.3).
+pub const REVIEW_REWARD_CAP_PER_CYCLE: u32 = 3;
+pub const BUG_REPORT_CAP_PER_CYCLE: u32 = 3;
+pub const ORACLE_VERIFY_CAP_PER_CYCLE: u32 = 3;
+pub const VERIFIER_MIN_REPUTATION: f32 = 0.4;
+pub const MUTUAL_PAIR_DECAY: f32 = 0.5;            // k-th mutual reward = base × 0.5^(k-1)
+pub const OVERTURNED_REVIEW_SLASH_MULTIPLIER: u64 = 2;
 
 /// Staking outcomes.
 pub const STAKE_WIN_BONUS_PERCENT: u64 = 10;       // +10% from treasury

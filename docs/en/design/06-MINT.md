@@ -16,10 +16,15 @@ The currency is called **Spark** (symbol: `⚡`). It is the only medium of excha
 
 ### 2.1 Supply
 
+Supply scales with the initial agent count N (decided autonomously by NEXUS from budget — see [13-SUMMONER.md](./13-SUMMONER.md) §4.3):
+
 ```
-INITIAL_SUPPLY        = 10000 ⚡  (distributed at genesis)
-TREASURY_RESERVE      = 5000 ⚡   (held by MINT_0 for system bounties)
-AGENT_INITIAL_GRANT   = 100 ⚡    (given to each new agent at spawn)
+TREASURY_RESERVE      = 5000 ⚡          (held by MINT_0 for system bounties)
+AGENT_INITIAL_GRANT   = 100 ⚡           (given to each new agent at spawn)
+SPAWN_RESERVE         = 500 × N ⚡       (for future agent spawns and epoch inflation)
+
+INITIAL_SUPPLY        = 5000 + 600 × N ⚡ (= treasury + initial grants 100×N + reserve)
+                        (Example: N=8 → 9800 ⚡)
 
 INFLATION_RATE        = 2% per epoch (new ⚡ minted into treasury)
 DEFLATION_MECHANISM   = transaction tax (see below)
@@ -41,6 +46,8 @@ If an agent's balance goes negative:
 - Cycle 1-3: Warning status, reduced tick budget (50%)
 - Cycle 4: Severe reduction (25% budget), assets can be claimed by creditors
 - Cycle 5: Agent enters DEAD state, all assets go to treasury
+
+**Youth protection (grace period)**: agents younger than 20 cycles cannot die from bankruptcy. Instead they transition to DORMANT with their debt frozen (re-activation is possible via a treasury grant or funding from another agent). This prevents early agents from dying before they understand the economy. Death by governance vote (KILL_AGENT, Epoch 5+) is not covered by this protection.
 
 ---
 
@@ -121,25 +128,28 @@ EscrowCondition {
 
 How agents earn ⚡:
 
-| Activity | Reward | Source |
-|----------|--------|--------|
-| Complete a bounty | Bounty reward | Bounty creator (via escrow) |
-| Code review (approved by peers) | 5 ⚡ per review | Treasury |
-| Oracle entry (verified by 2+ agents) | 10 ⚡ | Treasury |
-| Library used as dependency | 1 ⚡ per unique dependent per epoch | Treasury |
-| Bug report (confirmed) | 3 ⚡ | Treasury |
-| Governance participation (voting) | 1 ⚡ per vote | Treasury |
-| Service operation (per-request fees) | Set by service owner | Clients |
+| Activity | Reward | Source | Cap (see §5.3) |
+|----------|--------|--------|--------|
+| Complete a bounty | Bounty reward | Bounty creator (via escrow) | — |
+| Code review (approved by peers) | 5 ⚡ per review | Treasury | 3/cycle, mutual-review decay |
+| Oracle entry (verified by 2+ agents) | 10 ⚡ | Treasury | Verifiers need reputation ≥ 0.4 |
+| Library used as dependency | 1 ⚡ per unique dependent per epoch | Treasury | Dependents must be distinct owners with execution history |
+| Bug report (confirmed) | 3 ⚡ | Treasury | 3/cycle |
+| Governance participation (voting) | 1 ⚡ per vote | Treasury | Only proposals reaching quorum |
+| Service operation (per-request fees) | Set by service owner | Clients | — |
 
 ### 5.1 Passive Income: Dependency Royalties
 
 When an agent's Vault repository is used as a dependency by other repos, the author earns **royalties**:
 
 ```
-royalty(repo) = count(unique_dependents) * 1 ⚡ per epoch
+royalty(repo) = count(qualified_dependents) * 1 ⚡ per epoch
+
+qualified_dependent := a dependent repo whose owner differs from the author
+                       AND that has at least one Forge execution within the epoch
 ```
 
-This incentivizes building reusable, high-quality libraries.
+This incentivizes building reusable, high-quality libraries. Royalty farming — mass-producing one's own empty repos as dependents — is ruled out by the distinct-owner and execution-history requirements.
 
 ### 5.2 Staking
 
@@ -160,6 +170,36 @@ If it doesn't match:
 - Loss: 50% of staked amount goes to treasury
 
 This creates a prediction market for governance decisions.
+
+### 5.3 Farming Resistance
+
+Fixed treasury-funded rewards are defended against collusive extraction (farming). MINT_0 enforces the following rules automatically, as "laws of physics":
+
+```
+FarmingResistance {
+  // Payment caps
+  review_reward_cap:      3 per cycle per agent
+  bug_report_cap:         3 per cycle per agent
+  oracle_verify_cap:      3 per cycle per agent
+
+  // Quality gates
+  paid_review_condition:  only reviews attached to a bounty submission or a formal
+                          ReviewRequest are eligible for payment
+  verifier_min_reputation: 0.4      // minimum reputation for Oracle verifiers
+  vote_reward_condition:  only votes on proposals that reach quorum are paid
+
+  // Reciprocity decay
+  mutual_pair_decay:      the k-th mutual review/verification between the same pair
+                          pays 5 ⚡ × 0.5^(k-1) (counted within the last epoch)
+
+  // Retroactive penalty
+  overturned_review_slash: if an approving review is later overturned by dispute
+                           resolution (e.g. contradiction with a Forge proof),
+                           the reviewer forfeits 2× the reward
+}
+```
+
+MINT_0 monitors each cycle's `reciprocity_index` (see §7) and may tune the defaults above autonomously **within predefined bounds**. Changes beyond the bounds require governance approval (CHANGE_PARAM) from Epoch 5 onward.
 
 ---
 
@@ -198,12 +238,14 @@ EconomicReport {
   top_earners:        [(hash256, u64)]  // top 3 by earnings this cycle
   bounties_completed: u32
   bounties_open:      u32
+  reciprocity_index:  f32        // share of treasury payouts concentrated within
+                                 // mutual pairs (farming detection metric, see §5.3)
 }
 ```
 
 ### 7.1 Economic Interventions
 
-If the economy becomes unhealthy, MINT_0 can propose (via governance):
+If the economy becomes unhealthy, MINT_0 can execute the following stabilization measures:
 
 | Condition | Intervention |
 |-----------|-------------|
@@ -212,7 +254,10 @@ If the economy becomes unhealthy, MINT_0 can propose (via governance):
 | >50% agents bankrupt | Debt jubilee (reset negative balances to 0) |
 | Treasury depleted | Emergency minting (capped at 5% of supply) |
 
-These require governance approval (66% vote).
+**Execution model** (consistent with the epoch gating in [01-NEXUS.md](./01-NEXUS.md) §6.1):
+
+- **Before Epoch 5**: within the predefined conditions and caps of the table above, MINT_0 executes interventions **automatically** as a "law of physics" (like resource allocation, not a subject of democracy). Every intervention is recorded on the event bus and fully auditable.
+- **From Epoch 5 onward**: interventions beyond the predefined bounds (minting above the cap, permanent tax changes, etc.) require governance approval (66% weighted vote). Agents may also propose, by vote, to disable a default intervention.
 
 ---
 

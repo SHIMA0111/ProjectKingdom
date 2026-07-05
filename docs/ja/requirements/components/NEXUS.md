@@ -61,7 +61,7 @@ CREATE TABLE nexus.agents (
     spawn_tick      BIGINT NOT NULL,            -- エージェントが作成されたティック
     spawn_epoch     INTEGER NOT NULL,           -- エージェントが作成されたエポック
     role            SMALLINT NOT NULL,          -- 0=Generalist, 1=CompilerSmith, 2=Librarian, 3=Architect, 4=Explorer
-    reputation      REAL NOT NULL DEFAULT 0.0,  -- [0.0, 1.0]
+    reputation      REAL NOT NULL DEFAULT 0.5,  -- [0.0, 1.0]、中立事前値0.5から開始（デザイン 01-NEXUS.md §6.3）
     status          SMALLINT NOT NULL DEFAULT 0,-- 0=EMBRYO, 1=ACTIVE, 2=DORMANT, 3=DEAD
     parent_id       BYTEA REFERENCES nexus.agents(id),  -- スポンサーエージェント（システムスポーンの場合はNULL）
     genome          BYTEA,                      -- LLMシステムプロンプト/パーソナリティシード
@@ -92,7 +92,8 @@ CREATE TABLE nexus.epochs (
 CREATE TABLE nexus.cycles (
     id              BIGINT PRIMARY KEY,        -- サイクル番号
     start_tick      BIGINT NOT NULL,           -- このサイクルの最初のティック
-    end_tick        BIGINT NOT NULL,           -- このサイクルの最後のティック（start_tick + 255）
+    end_tick        BIGINT NOT NULL,           -- このサイクルの最後のティック（可変長 —— 全アクティブエージェントが
+                                               -- バジェットを消費/放棄した時点。デザイン 01-NEXUS.md §2.1）
     epoch_id        INTEGER NOT NULL REFERENCES nexus.epochs(id),
     world_hash      BYTEA NOT NULL,            -- 32バイト、すべてのコンポーネント状態ハッシュのsha256
     nexus_hash      BYTEA NOT NULL,            -- 32バイト、nexus状態ハッシュ
@@ -275,7 +276,9 @@ pub trait Nexus: Send + Sync {
     /// 新しいティック番号を返す。
     async fn advance_tick(&self) -> Result<u64, NexusError>;
 
-    /// 現在のティックがサイクルを完了するか確認（tick % 256 == 255）。
+    /// 現在のティックがサイクルを完了するか確認
+    /// （全アクティブエージェントがtickバジェットを消費または放棄した時点。
+    ///   サイクルは固定長ではない —— デザイン 01-NEXUS.md §2.1）。
     fn is_cycle_boundary(&self) -> bool;
 
     // ── アイデンティティ ──────────────────────────────────────────────

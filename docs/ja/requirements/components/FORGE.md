@@ -146,13 +146,15 @@ pub struct IoChannel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Opcode {
-    // 算術（特記なき限り1ティック）
+    // 算術（特記なき限り1ティック。ADD/SUB/MULは2の補数でラップし符号に依存しない）
     ADD  = 0x01, // rd = rs1 + rs2
     SUB  = 0x02, // rd = rs1 - rs2
     MUL  = 0x03, // rd = rs1 * rs2          (2ティック)
-    DIV  = 0x04, // rd = rs1 / rs2          (2ティック、/0でフォルト)
-    MOD  = 0x05, // rd = rs1 % rs2          (2ティック、%0でフォルト)
+    DIV  = 0x04, // rd = rs1 / rs2  符号なし (2ティック、/0でフォルト)
+    MOD  = 0x05, // rd = rs1 % rs2  符号なし (2ティック、%0でフォルト)
     NEG  = 0x06, // rd = -rs1
+    DIVS = 0x07, // rd = rs1 / rs2  符号付き、0方向切り捨て (2ティック、/0でフォルト)
+    MODS = 0x08, // rd = rs1 % rs2  符号付き、符号は被除数に従う (2ティック、%0でフォルト)
 
     // ビット演算（1ティック）
     AND  = 0x10,
@@ -160,7 +162,8 @@ pub enum Opcode {
     XOR  = 0x12,
     NOT  = 0x13,
     SHL  = 0x14,
-    SHR  = 0x15,
+    SHR  = 0x15, // 論理右シフト
+    SAR  = 0x16, // 算術右シフト（符号ビットを複製）
 
     // メモリ（1ティック）
     LOAD   = 0x20, // rd = memory[rs1 + offset]           (バイトロード)
@@ -174,7 +177,8 @@ pub enum Opcode {
     JMP  = 0x30, // 無条件ジャンプ                        (1ティック)
     JZ   = 0x31, // rs1 == 0 の場合ジャンプ               (1ティック)
     JNZ  = 0x32, // rs1 != 0 の場合ジャンプ               (1ティック)
-    JLT  = 0x33, // rs1 < rs2 の場合ジャンプ              (1ティック)
+    JLT  = 0x33, // rs1 < rs2 の場合ジャンプ（符号なし比較）  (1ティック)
+    JLTS = 0x36, // rs1 < rs2 の場合ジャンプ（符号付き比較）  (1ティック)
     CALL = 0x34, // PCをプッシュ、addrにジャンプ           (2ティック)
     RET  = 0x35, // PCをポップ、リターン                   (2ティック)
 
@@ -214,7 +218,7 @@ impl Opcode {
     /// このオペコードのティックコストを返す。
     pub fn tick_cost(&self) -> u64 {
         match self {
-            Opcode::MUL | Opcode::DIV | Opcode::MOD => 2,
+            Opcode::MUL | Opcode::DIV | Opcode::DIVS | Opcode::MOD | Opcode::MODS => 2,
             Opcode::SEND | Opcode::RECV => 3,
             Opcode::CALL | Opcode::RET => 2,
             _ => 1,
@@ -262,6 +266,8 @@ pub struct ForgeProgram {
     pub metadata: Vec<u8>,         // コンパイラ情報、最適化レベルなど
 }
 ```
+
+**正規バイナリエンコーディング**（コンテンツアドレッサビリティのため、デザイン 05-FORGE.md §2.4）: 各命令は8バイト固定長のリトルエンディアン `[opcode:u8][a:u8][b:u8][c:u8][imm:u32]`。例外として`LI`は16バイト（8バイトヘッダ + imm64ワード）。未使用フィールドは0でなければならず、非正規エンコーディングは`InvalidInstruction`フォルトを引き起こす。同一プログラムは常に同一のバイト列、したがって同一のハッシュを持つ。
 
 ### 3.9 インポート/リンク
 
@@ -492,6 +498,9 @@ fn run(machine: &mut ForgeMachine) -> ExecResult:
         match instr.opcode:
             ADD => machine.registers[rd] = rs1_val.wrapping_add(rs2_val); update_flags()
             DIV => if rs2_val == 0 { fault(DivideByZero) } else { rd = rs1 / rs2 }
+            DIVS => if rs2_val == 0 { fault(DivideByZero) } else { rd = (rs1 as i64).wrapping_div(rs2 as i64) as u64 }
+            SAR  => rd = ((rs1_val as i64) >> (rs2_val % 64)) as u64
+            JLTS => if (rs1_val as i64) < (rs2_val as i64) { pc = addr; continue }
             LOAD => bounds_check(addr); rd = memory[addr]
             PUSH => if sp < heap_end { fault(StackOverflow) }; sp -= 8; write(sp, rs1)
             POP  => if sp >= stack_start { fault(StackUnderflow) }; rd = read(sp); sp += 8

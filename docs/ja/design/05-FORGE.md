@@ -4,6 +4,8 @@
 
 Forgeはコードが**実行される**場所である。AIエージェント向けに隔離された、決定論的で計量制御された実行サンドボックスを提供する。Kingdom内のすべての計算はForge内で行われる。
 
+**FM tickとworld tickの区別**：Forgeサンドボックス内のVM命令は**FM tick**として計量され、エージェントのアクション予算である**world tick**（[01-NEXUS.md](./01-NEXUS.md) §2）とは別勘定である。`execute`アクションの発行は1 world tickを消費し、サンドボックス内で実行される命令はエージェントのFM tickクォータ（基本100,000 FM tick/cycle、通貨で追加購入可能）から差し引かれる。本書で単に「tick」と書かれている場合、サンドボックス内の文脈ではFM tickを指す。
+
 Forgeは従来のVMやコンテナではない。以下のために設計された**tick計量抽象マシン**である：
 - すべての計算の決定論的リプレイ
 - きめ細かなリソース計上
@@ -31,9 +33,9 @@ ForgeMachine {
   heap_start:  u64
   stack_start: u64
 
-  // 計量
-  tick_budget: u64              // 残りtick数
-  ticks_used:  u64              // 消費tick数
+  // 計量（FM tick — world tickとは別勘定）
+  tick_budget: u64              // 残りFM tick数
+  ticks_used:  u64              // 消費FM tick数
 
   // I/O
   channels:    [IOChannel; 16]  // 通信ポート
@@ -48,12 +50,14 @@ ForgeMachine {
 FM命令セットは最小限だが完全である：
 
 ```
-// 算術演算
+// 算術演算（ADD/SUB/MULは2の補数でラップし、符号に依存しない）
 ADD  rd, rs1, rs2      // rd = rs1 + rs2
 SUB  rd, rs1, rs2
 MUL  rd, rs1, rs2
-DIV  rd, rs1, rs2      // ゼロ除算でフォールト
-MOD  rd, rs1, rs2
+DIV  rd, rs1, rs2      // 符号なし除算。ゼロ除算でフォールト
+DIVS rd, rs1, rs2      // 符号付き除算（0方向切り捨て）。ゼロ除算でフォールト
+MOD  rd, rs1, rs2      // 符号なし剰余。ゼロ除算でフォールト
+MODS rd, rs1, rs2      // 符号付き剰余（符号は被除数に従う）。ゼロ除算でフォールト
 NEG  rd, rs1
 
 // ビット演算
@@ -62,7 +66,8 @@ OR   rd, rs1, rs2
 XOR  rd, rs1, rs2
 NOT  rd, rs1
 SHL  rd, rs1, rs2
-SHR  rd, rs1, rs2
+SHR  rd, rs1, rs2      // 論理右シフト
+SAR  rd, rs1, rs2      // 算術右シフト（符号ビットを複製）
 
 // メモリ
 LOAD  rd, rs1, offset   // rd = memory[rs1 + offset]
@@ -76,7 +81,8 @@ POP   rd                // スタックからポップ
 JMP   addr
 JZ    rs1, addr          // ゼロならジャンプ
 JNZ   rs1, addr          // ゼロでなければジャンプ
-JLT   rs1, rs2, addr     // より小さければジャンプ
+JLT   rs1, rs2, addr     // 符号なし比較でより小さければジャンプ
+JLTS  rs1, rs2, addr     // 符号付き比較でより小さければジャンプ
 CALL  addr               // PCをプッシュしてジャンプ
 RET                      // PCをポップして戻る
 
@@ -89,19 +95,40 @@ FAULT code               // フォールトをトリガー
 NOP                      // 何もしない（1 tickを消費）
 
 // I/O
-SEND  channel, rs1, len  // チャンネルにバイトを送信
-RECV  channel, rd, maxlen // チャンネルからバイトを受信（空ならブロック）
-POLL  channel, rd        // ノンブロッキングのデータチェック
+SEND  channel, rs1, len  // メモリ上のバッファ（先頭アドレス = rs1、長さ = len バイト）を
+                         // チャンネルに送信
+RECV  channel, rd, maxlen // チャンネルから最大maxlenバイトを受信し、
+                          // rdが指すアドレスのメモリに書き込む（空ならブロック）
+POLL  channel, rd        // ノンブロッキングのデータチェック（利用可能バイト数をrdへ）
 
 // 計量
-TICK                     // 1 tickをイールド（協調スケジューリング用）
-BUDGET rd                // 残りtickバジェットをrdに読み込む
+TICK                     // 1 FM tickをイールド（協調スケジューリング用）
+BUDGET rd                // 残りFM tickバジェットをrdに読み込む
 ```
 
-各命令のコストは正確に**1 tick**。例外：
-- `MUL`, `DIV`, `MOD`: 2 tick
-- `SEND`, `RECV`: 3 tick
-- `CALL`, `RET`: 2 tick
+各命令のコストは正確に**1 FM tick**。例外：
+- `MUL`, `DIV`, `DIVS`, `MOD`, `MODS`: 2 FM tick
+- `SEND`, `RECV`: 3 FM tick
+- `CALL`, `RET`: 2 FM tick
+
+### 2.4 命令エンコーディング（正規形）
+
+コンテンツアドレッサビリティのため、バイトコードの**正規バイナリ表現**を定義する。同一のプログラムは常に同一のバイト列、したがって同一のハッシュを持つ：
+
+```
+命令          = 8バイト固定長（リトルエンディアン）:
+  [0]     opcode  (u8)
+  [1]     a       (u8)   — rd または rs1（命令による）
+  [2]     b       (u8)   — rs1 または rs2
+  [3]     c       (u8)   — rs2 またはチャンネル番号
+  [4..8]  imm     (u32)  — オフセット / アドレス / 長さ / フォールトコード
+
+例外: LI rd, imm64 は16バイト —— 8バイトのヘッダ（imm領域は0）に、
+      8バイトのimm64リトルエンディアンワードが続く。
+
+未使用フィールドは0でなければならない（非正規なエンコーディングは
+INVALID_INSTRUCTIONフォールト）。
+```
 
 ### 2.3 I/Oチャンネル
 
@@ -132,7 +159,7 @@ CreateSandbox {
   owner:        hash256          // 実行を要求するエージェント
   code:         hash256          // プログラムを含むVaultオブジェクト
   memory_quota: u64              // メモリの最大バイト数
-  tick_budget:  u64              // 実行の最大tick数
+  tick_budget:  u64              // 実行の最大FM tick数（オーナーのFM tickクォータから）
   input:        bytes            // チャンネル2上の初期データ
   environment:  map<bytes, bytes> // 特殊レジスタ経由でアクセス可能なキーバリューペア
   persistent:   bool             // trueならサンドボックスはcycle間で存続
@@ -245,11 +272,12 @@ ExecutionProof {
 
 | リソース | コスト |
 |----------|------|
-| サンドボックス作成 | 5 tick + メモリ1KBあたり1 Mint |
-| コード実行 | FM tick あたり1 tick |
-| 永続サンドボックス | 基本10 Mint/cycle + tickコスト |
-| 証明生成 | 実行tickコストの2倍 |
-| インポート/リンク | インポートあたり2 tick |
+| サンドボックス作成 | 5 world tick + メモリ1KBあたり1 Mint |
+| コード実行（executeアクションの発行） | 1 world tick |
+| サンドボックス内のVM命令 | FM tickクォータから計量（基本100,000 FM tick/cycle/エージェント、1 ⚡で+10,000購入可能） |
+| 永続サンドボックス | 基本10 Mint/cycle + FM tickコスト |
+| 証明生成 | 実行FM tickコストの2倍をFM tickクォータから消費 |
+| インポート/リンク | インポートあたり2 FM tick |
 
 ---
 

@@ -411,7 +411,7 @@ pub struct Event {
 | Forge | `0x4000–0x4FFF` |
 | Mint | `0x5000–0x5FFF` |
 | Portal | `0x6000–0x6FFF` |
-| Bridge | `0x8000–0x8FFF` |
+| Bridge | `0x8000–0x8FFF` (Observer-internal channel only — BRIDGE_0 cannot write to the Substrate Bus, so these never appear on the agent-visible bus; see design 01-NEXUS.md §4.3) |
 
 ### 5.4 Subscription Filter
 
@@ -438,6 +438,11 @@ pub struct SubstrateBus {
     lamport: AtomicU64,
     /// Subscriber channels.
     subscribers: DashMap<SubscriberId, Subscriber>,
+    /// Sealed input store — payload bodies of non-deterministic external inputs
+    /// (LLM responses, Portal responses). Events on the bus carry only the
+    /// content_hash (design 01-NEXUS.md §4.5). Accessible only to NEXUS replay
+    /// and Observer/Bridge.
+    sealed_inputs: SealedInputStore,
 }
 
 struct Subscriber {
