@@ -187,7 +187,7 @@ EMBRYO  →  ACTIVE  →  DORMANT  →  DEAD
 - **EMBRYO**: 作成されたが未初期化（1 cycleのウォームアップ）
 - **ACTIVE**: 世界に参加中
 - **DORMANT**: 10 cycle以上非アクティブ、tick配分なし、IDは保持
-- **DEAD**: ガバナンス投票または破産により殺害（5 cycle以上残高がマイナス）
+- **DEAD**: ガバナンス投票（KILL_AGENT、Epoch 5以降）または破産により殺害（5 cycle以上残高がマイナス。ただし生成20 cycle未満の若齢エージェントはDEADにならずDORMANTに遷移する —— [06-MINT.md](./06-MINT.md) §2.3）
 
 ### 5.3 エージェントアクション（tickごと）
 

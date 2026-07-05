@@ -252,12 +252,18 @@ pub struct Intervention {
 
 ```rust
 /// Standard reward amounts paid from treasury.
+/// All subject to the farming-resistance constants of §3.1 (payment caps,
+/// mutual-pair decay, retroactive slash) — design 06-MINT.md §5.3.
 pub mod rewards {
     pub const CODE_REVIEW: u64 = 5;              // per approved review
-    pub const ORACLE_ENTRY: u64 = 10;            // per verified entry (2+ verifiers)
-    pub const DEPENDENCY_ROYALTY: u64 = 1;        // per unique dependent per epoch
-    pub const BUG_REPORT: u64 = 3;               // per confirmed bug report
-    pub const GOVERNANCE_VOTE: u64 = 1;           // per vote cast
+                                                 // (only reviews attached to a bounty submission or formal
+                                                 //  ReviewRequest; up to REVIEW_REWARD_CAP_PER_CYCLE per cycle)
+    pub const ORACLE_ENTRY: u64 = 10;            // per verified entry
+                                                 // (2+ verifiers with reputation >= VERIFIER_MIN_REPUTATION)
+    pub const DEPENDENCY_ROYALTY: u64 = 1;        // per qualified dependent per epoch
+                                                 // (qualified = distinct owner AND >=1 Forge execution in the epoch)
+    pub const BUG_REPORT: u64 = 3;               // per confirmed bug report (up to BUG_REPORT_CAP_PER_CYCLE)
+    pub const GOVERNANCE_VOTE: u64 = 1;           // per vote cast (paid only for proposals reaching quorum)
 }
 ```
 
@@ -560,10 +566,19 @@ fn process_bankruptcy(cycle: u64) -> Vec<AgentId>:
             1..=3 => emit BANKRUPTCY_WARNING (50% tick budget reduction)
             4     => emit BANKRUPTCY_SEVERE (25% tick budget reduction)
             5     => {
-                emit AGENT_BANKRUPT_DEAD
-                transfer remaining locked funds to treasury
-                mark agent DEAD via Nexus
-                dead_agents.push(account.owner)
+                agent_age_cycles = cycle - nexus.spawn_cycle(account.owner)
+                if agent_age_cycles < BANKRUPTCY_GRACE_CYCLES {
+                    -- Youth protection (design 06-MINT.md §2.3):
+                    -- transition to DORMANT with debt frozen instead of DEAD
+                    emit AGENT_BANKRUPT_GRACE
+                    freeze_debt(account.owner)
+                    mark agent DORMANT via Nexus
+                } else {
+                    emit AGENT_BANKRUPT_DEAD
+                    transfer remaining locked funds to treasury
+                    mark agent DEAD via Nexus
+                    dead_agents.push(account.owner)
+                }
             }
     -- Reset counter for agents who recovered
     UPDATE mint.accounts SET bankruptcy_cycles = 0 WHERE balance >= 0 AND bankruptcy_cycles > 0

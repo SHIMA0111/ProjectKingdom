@@ -252,12 +252,18 @@ pub struct Intervention {
 
 ```rust
 /// 財務省から支払われる標準報酬額。
+/// すべて§3.1のファーミング耐性定数（支払い上限、相互ペア逓減、遡及スラッシュ）の
+/// 適用対象（デザイン 06-MINT.md §5.3）。
 pub mod rewards {
     pub const CODE_REVIEW: u64 = 5;              // 承認されたレビューごと
-    pub const ORACLE_ENTRY: u64 = 10;            // 検証されたエントリごと（2+検証者）
-    pub const DEPENDENCY_ROYALTY: u64 = 1;        // エポックごとのユニーク依存者ごと
-    pub const BUG_REPORT: u64 = 3;               // 確認されたバグレポートごと
-    pub const GOVERNANCE_VOTE: u64 = 1;           // 投票実施ごと
+                                                 // （バウンティ提出物または正式なReviewRequestに紐づくもののみ、
+                                                 //   REVIEW_REWARD_CAP_PER_CYCLE件/サイクルまで）
+    pub const ORACLE_ENTRY: u64 = 10;            // 検証されたエントリごと
+                                                 // （検証者はレピュテーション >= VERIFIER_MIN_REPUTATIONの2+体）
+    pub const DEPENDENCY_ROYALTY: u64 = 1;        // エポックごとの適格依存者ごと
+                                                 // （適格 = 別オーナーかつ当該エポック内にForge実行実績あり）
+    pub const BUG_REPORT: u64 = 3;               // 確認されたバグレポートごと（BUG_REPORT_CAP_PER_CYCLE件まで）
+    pub const GOVERNANCE_VOTE: u64 = 1;           // 投票実施ごと（定足数に到達した提案のみ支払い対象）
 }
 ```
 
@@ -560,10 +566,19 @@ fn process_bankruptcy(cycle: u64) -> Vec<AgentId>:
             1..=3 => emit BANKRUPTCY_WARNING（50%ティック予算削減）
             4     => emit BANKRUPTCY_SEVERE（25%ティック予算削減）
             5     => {
-                emit AGENT_BANKRUPT_DEAD
-                残りのロックされた資金を財務省に送金
-                Nexus経由でエージェントをDEADとマーク
-                dead_agents.push(account.owner)
+                agent_age_cycles = cycle - nexus.spawn_cycle(account.owner)
+                if agent_age_cycles < BANKRUPTCY_GRACE_CYCLES {
+                    -- 若齢保護（デザイン 06-MINT.md §2.3）:
+                    -- DEADではなくDORMANTに遷移し、債務を凍結する
+                    emit AGENT_BANKRUPT_GRACE
+                    freeze_debt(account.owner)
+                    Nexus経由でエージェントをDORMANTとマーク
+                } else {
+                    emit AGENT_BANKRUPT_DEAD
+                    残りのロックされた資金を財務省に送金
+                    Nexus経由でエージェントをDEADとマーク
+                    dead_agents.push(account.owner)
+                }
             }
     -- 回復したエージェントのカウンターをリセット
     UPDATE mint.accounts SET bankruptcy_cycles = 0 WHERE balance >= 0 AND bankruptcy_cycles > 0

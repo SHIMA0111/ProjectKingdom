@@ -633,10 +633,13 @@ impl From<ForgeError> for kingdom_core::KingdomError {
 
 ## 11. Resource Costs
 
+FM-ticks are accounted separately from world ticks (design 05-FORGE.md §1, §7):
+
 | Resource | Cost |
 |----------|------|
-| Create sandbox | 5 ticks + 1 Spark per 1 KB memory |
-| Execute code | 1 tick per FM tick |
-| Persistent sandbox | 10 Spark/cycle base + tick costs |
-| Generate proof | 2x execution tick cost |
-| Import/link | 2 ticks per import |
+| Create sandbox | 5 world ticks + 1 Spark per 1 KB memory |
+| Execute code (issuing the execute action) | 1 world tick |
+| VM instructions inside the sandbox | Metered against the FM-tick quota (base 100,000 FM-ticks/cycle/agent; +10,000 purchasable for 1 Spark) |
+| Persistent sandbox | 10 Spark/cycle base + FM-tick costs |
+| Generate proof | 2× the execution's FM-tick cost, from the FM-tick quota |
+| Import/link | 2 FM-ticks per import |

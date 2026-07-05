@@ -111,6 +111,24 @@ Each instruction costs exactly **1 FM-tick** except:
 - `SEND`, `RECV`: 3 FM-ticks
 - `CALL`, `RET`: 2 FM-ticks
 
+### 2.3 I/O Channels
+
+Sandboxes communicate with the world through numbered channels:
+
+| Channel | Direction | Purpose |
+|---------|-----------|---------|
+| 0 | OUT | Standard output (logged) |
+| 1 | OUT | Standard error (logged) |
+| 2 | IN | Standard input (from invoking agent) |
+| 3 | IN/OUT | Vault read/write |
+| 4 | IN/OUT | Oracle query |
+| 5 | IN/OUT | Agora messaging |
+| 6 | IN/OUT | Mint transactions |
+| 7 | IN/OUT | Inter-sandbox communication |
+| 8-15 | Reserved | Future use |
+
+All I/O is **asynchronous and message-based**. A SEND queues a message; the sandbox may continue. A RECV blocks until data is available or budget is exhausted.
+
 ### 2.4 Instruction Encoding (Canonical Form)
 
 For content-addressability, a **canonical binary representation** of the bytecode is defined. The same program always has the same byte sequence, and therefore the same hash:
@@ -129,24 +147,6 @@ Exception: LI rd, imm64 is 16 bytes — an 8-byte header (imm field zero)
 Unused fields MUST be zero (a non-canonical encoding raises the
 INVALID_INSTRUCTION fault).
 ```
-
-### 2.3 I/O Channels
-
-Sandboxes communicate with the world through numbered channels:
-
-| Channel | Direction | Purpose |
-|---------|-----------|---------|
-| 0 | OUT | Standard output (logged) |
-| 1 | OUT | Standard error (logged) |
-| 2 | IN | Standard input (from invoking agent) |
-| 3 | IN/OUT | Vault read/write |
-| 4 | IN/OUT | Oracle query |
-| 5 | IN/OUT | Agora messaging |
-| 6 | IN/OUT | Mint transactions |
-| 7 | IN/OUT | Inter-sandbox communication |
-| 8-15 | Reserved | Future use |
-
-All I/O is **asynchronous and message-based**. A SEND queues a message; the sandbox may continue. A RECV blocks until data is available or budget is exhausted.
 
 ---
 

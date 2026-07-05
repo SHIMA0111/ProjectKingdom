@@ -324,6 +324,10 @@ pub trait Nexus: Send + Sync {
     // ── Governance ────────────────────────────────────────────────────
 
     /// Submit a governance proposal. Requires ACTIVE agent status.
+    /// Epoch gate (design 01-NEXUS.md §6.1):
+    ///   - SPAWN_AGENT: from Epoch 2 (Foundation) onward
+    ///   - KILL_AGENT / CHANGE_PARAM / EPOCH_ADVANCE / CUSTOM: from Epoch 5 (Sovereignty) onward
+    /// Pre-unlock kinds are rejected with an EpochLocked error.
     async fn submit_proposal(&self, proposal: Proposal) -> Result<Hash256, NexusError>;
 
     /// Cast a vote on a proposal. Weighted by voter's reputation.
@@ -535,9 +539,9 @@ pub struct EpochChangeEvent {
 | Cycle boundary processing | < 500 ms | World state hash computation, tick allocation, maintenance |
 | Proposal tally | < 100 ms | Aggregate weighted votes from DB |
 | Reputation recomputation (single) | < 50 ms | Cross-component metric aggregation |
-| Reputation batch (all agents) | < 2 s | For max 64 agents |
+| Reputation batch (all agents) | < 2 s | Assuming the implementation sizing bound of 64 agents |
 | World state hash | < 200 ms | Collect 7 component hashes + sha256 |
-| Max concurrent active agents | 64 | Scaling: +4 per epoch |
+| Max concurrent active agents | Implementation sizing bound: 64 | Not a world rule; the actual cap is decided by NEXUS from budget (min 4, +4 per epoch — design 00-MASTER.md §7) |
 | Event throughput | > 10,000 events/s | Append-only log with in-memory index |
 
 ---
@@ -669,6 +673,8 @@ cycle_maintenance():
             update_status(agent, DORMANT)
 
     // Kill bankrupt agents (balance < 0 for 5 consecutive cycles)
+    // Youth protection: agents younger than BANKRUPTCY_GRACE_CYCLES(=20) cycles
+    // transition to DORMANT with debt frozen instead of DEAD (design 06-MINT.md §2.3)
     for agent in agents(status=ACTIVE or status=DORMANT):
         balance = mint.balance(agent.id)
         if balance < 0:
@@ -676,8 +682,13 @@ cycle_maintenance():
         else:
             agent.balance_negative_cycles = 0
         if agent.balance_negative_cycles >= 5:
-            update_status(agent, DEAD)
-            publish agent_kill(Bankruptcy)
+            if current_cycle - cycle_of(agent.spawn_tick) < BANKRUPTCY_GRACE_CYCLES:
+                update_status(agent, DORMANT)
+                mint.freeze_debt(agent.id)
+                publish agent_dormant(BankruptcyGrace)
+            else:
+                update_status(agent, DEAD)
+                publish agent_kill(Bankruptcy)
 
     // Auto-spawn if below minimum threshold
     if active_agent_count() < 4:
@@ -702,7 +713,7 @@ spawn_agent(request):
         spawn_tick: current_tick(),
         spawn_epoch: current_epoch(),
         role: request.role,
-        reputation: 0.0,
+        reputation: 0.5,   // neutral prior (design 01-NEXUS.md §6.3)
         status: EMBRYO,
         parent_id: request.parent,
         genome: request.genome,

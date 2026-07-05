@@ -662,8 +662,9 @@ pub enum Epoch {
     Open(u32),
 }
 
-/// 時間定数。
-pub const TICKS_PER_CYCLE: u64 = 256;
-pub const BASE_TICK_BUDGET: u64 = 64;
-pub const MAX_TICK_BUDGET: u64 = 256;
+/// 時間定数。サイクルは固定tick長を持たない（全アクティブエージェントが
+/// バジェットを消費/放棄した時点で終了 —— デザイン 01-NEXUS.md §2.1）。
+/// 以下はエージェントごとのバジェット境界であり、サイクル長ではない。
+pub const BASE_TICK_BUDGET: u64 = 64;   // エージェントごとの基本バジェット/サイクル
+pub const MAX_TICK_BUDGET: u64 = 256;   // エージェントごとの上限（基本64 + 購入192）
 ```

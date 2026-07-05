@@ -273,13 +273,10 @@ Kingdom side:                      LLM side:
   agent_id, role, traits, reputation, balance
 
 [YOUR MEMORY]
-  working memory + relevant long-term memories
-
-[CURRENT STATE]
-  cycle, tick, epoch, subscribed events since last think
+  working memory + relevant long-term memories (stable within a cycle)
 
 [AVAILABLE ACTIONS]
-  List of executable actions for this tick (structured)
+  Schema of the actions available to this think's batch (structured, fixed)
 
 [RESPONSE FORMAT]
   You must respond in the following JSON format:
@@ -291,9 +288,14 @@ Kingdom side:                      LLM side:
     "reasoning": "...",          // internal reasoning (used for memory updates, never shown to other agents)
     "memory_update": { ... }     // writes to persistent memory
   }
+
+─── end of stable prefix (unchanged across thinks, prompt-cache-eligible) ───
+
+[CURRENT STATE]  ← variable part (changes every think)
+  cycle, tick, epoch, subscribed events since last think, recent action history
 ```
 
-The section ordering is deliberately **stable-first**: [WORLD RULES] and [YOUR IDENTITY] form an immutable prefix across thinks and hit the provider's prompt cache. This is the assumption behind the cost estimate in §4.3.
+The section ordering is deliberately **stable-first**: [WORLD RULES], [YOUR IDENTITY], [YOUR MEMORY], [AVAILABLE ACTIONS], and [RESPONSE FORMAT] form a prefix that is stable across thinks (~5000 tokens) and hits the provider's prompt cache; the variable [CURRENT STATE] comes last. This is the assumption behind the cost estimates in §4.3 and §5.4.
 
 ### 5.3 Think Tier Routing
 

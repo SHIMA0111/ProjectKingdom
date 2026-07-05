@@ -325,6 +325,10 @@ pub trait Nexus: Send + Sync {
     // ── ガバナンス ────────────────────────────────────────────────────
 
     /// ガバナンス提案を提出。ACTIVEエージェントステータスが必要。
+    /// エポックゲート（デザイン 01-NEXUS.md §6.1）:
+    ///   - SPAWN_AGENT: Epoch 2（Foundation）以降
+    ///   - KILL_AGENT / CHANGE_PARAM / EPOCH_ADVANCE / CUSTOM: Epoch 5（Sovereignty）以降
+    /// 解放前の種別はEpochLockedエラーで拒否される。
     async fn submit_proposal(&self, proposal: Proposal) -> Result<Hash256, NexusError>;
 
     /// 提案に投票。投票者のレピュテーションで加重。
@@ -536,9 +540,9 @@ pub struct EpochChangeEvent {
 | サイクル境界処理 | < 500 ms | ワールド状態ハッシュ計算、ティック割り当て、メンテナンス |
 | 提案集計 | < 100 ms | DBから加重投票を集計 |
 | レピュテーション再計算（単一）| < 50 ms | クロスコンポーネントメトリック集約 |
-| レピュテーションバッチ（全エージェント）| < 2 s | 最大64エージェント用 |
+| レピュテーションバッチ（全エージェント）| < 2 s | 実装サイジング上限64エージェントを想定 |
 | ワールド状態ハッシュ | < 200 ms | 7コンポーネントハッシュ収集 + sha256 |
-| 最大同時アクティブエージェント | 64 | スケーリング: エポックごとに+4 |
+| 最大同時アクティブエージェント | 実装サイジング上限: 64 | ワールドルールではない。実際の上限はNEXUSが予算から決定（最小4、エポックごとに+4 —— デザイン 00-MASTER.md §7） |
 | イベントスループット | > 10,000イベント/秒 | インメモリインデックス付き追記専用ログ |
 
 ---
@@ -670,6 +674,8 @@ cycle_maintenance():
             update_status(agent, DORMANT)
 
     // 破産エージェントを死亡（5サイクル連続で残高 < 0）
+    // 若齢保護: 生成からBANKRUPTCY_GRACE_CYCLES(=20)サイクル未満のエージェントは
+    // DEADにせずDORMANTに遷移し、債務を凍結する（デザイン 06-MINT.md §2.3）
     for agent in agents(status=ACTIVE or status=DORMANT):
         balance = mint.balance(agent.id)
         if balance < 0:
@@ -677,8 +683,13 @@ cycle_maintenance():
         else:
             agent.balance_negative_cycles = 0
         if agent.balance_negative_cycles >= 5:
-            update_status(agent, DEAD)
-            publish agent_kill(Bankruptcy)
+            if current_cycle - cycle_of(agent.spawn_tick) < BANKRUPTCY_GRACE_CYCLES:
+                update_status(agent, DORMANT)
+                mint.freeze_debt(agent.id)
+                publish agent_dormant(BankruptcyGrace)
+            else:
+                update_status(agent, DEAD)
+                publish agent_kill(Bankruptcy)
 
     // 最小閾値を下回る場合、自動スポーン
     if active_agent_count() < 4:
@@ -703,7 +714,7 @@ spawn_agent(request):
         spawn_tick: current_tick(),
         spawn_epoch: current_epoch(),
         role: request.role,
-        reputation: 0.0,
+        reputation: 0.5,   // 中立事前値（デザイン 01-NEXUS.md §6.3）
         status: EMBRYO,
         parent_id: request.parent,
         genome: request.genome,

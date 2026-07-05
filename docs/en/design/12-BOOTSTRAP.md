@@ -104,7 +104,7 @@ These are the "laws of physics" — they exist before the universe does.
 6.2  Mint initial supply: INITIAL_SUPPLY = 5,000 + 600 × N ⚡ (formula in 06-MINT.md §2.1)
 6.3  Allocate to treasury: 5,000 ⚡
 6.4  Distribute to agents: 100 ⚡ each (100 × N ⚡ total)
-6.5  Reserve: 500 × N ⚡ (for future agent spawns and epoch inflation)
+6.5  Reserve: 500 × N ⚡ (for future agent spawn grants)
      (Example: for N=8, INITIAL_SUPPLY = 9,800 ⚡ = treasury 5,000 + grants 800 + reserve 4,000)
 6.6  Record MINT_READY event
 ```

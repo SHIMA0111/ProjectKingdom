@@ -273,13 +273,10 @@ Kingdom側:                        LLM側:
   agent_id, role, traits, reputation, balance
 
 [YOUR MEMORY]
-  ワーキングメモリ + 関連する長期記憶
-
-[CURRENT STATE]
-  cycle, tick, epoch, 前回のthink以降の購読イベント
+  ワーキングメモリ + 関連する長期記憶（cycle内では安定）
 
 [AVAILABLE ACTIONS]
-  このtickで実行可能なアクションのリスト（構造化）
+  このthinkのバッチで利用可能なアクションのスキーマ（構造化、固定）
 
 [RESPONSE FORMAT]
   以下のJSONフォーマットで応答すること:
@@ -291,9 +288,14 @@ Kingdom側:                        LLM側:
     "reasoning": "...",          // 内部推論（メモリ更新に使用、他エージェントには非公開）
     "memory_update": { ... }     // 永続メモリへの書き込み
   }
+
+─── ここまで安定プレフィックス（think間で不変、プロンプトキャッシュ対象）───
+
+[CURRENT STATE]  ← 可変部（毎thinkで変化）
+  cycle, tick, epoch, 前回のthink以降の購読イベント、直近のアクション履歴
 ```
 
-セクションの順序は**安定なものが先頭**になるよう設計されている：[WORLD RULES]と[YOUR IDENTITY]はthink間で不変のプレフィックスであり、プロバイダーのプロンプトキャッシュにヒットする。これが§4.3のコスト見積もりの前提である。
+セクションの順序は**安定なものが先頭**になるよう設計されている：[WORLD RULES]、[YOUR IDENTITY]、[YOUR MEMORY]、[AVAILABLE ACTIONS]、[RESPONSE FORMAT]がthink間で安定したプレフィックス（約5000トークン）を構成し、プロバイダーのプロンプトキャッシュにヒットする。可変の[CURRENT STATE]は末尾に置かれる。これが§4.3と§5.4のコスト見積もりの前提である。
 
 ### 5.3 Thinkティアルーティング
 

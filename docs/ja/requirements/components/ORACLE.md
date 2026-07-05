@@ -65,6 +65,7 @@ CREATE TABLE oracle.entries (
     contributors    BYTEA[] NOT NULL DEFAULT '{}', -- agent_idの配列
     created_at_tick BIGINT NOT NULL,
     updated_at_tick BIGINT NOT NULL,
+    updated_at_cycle BIGINT NOT NULL,           -- サイクルは可変tick長のため、経過サイクル計算にはこちらを使う
 
     -- コンテンツ
     body            BYTEA NOT NULL,             -- MessagePackエンコードされた構造化コンテンツ（ContentBlockツリー）
@@ -87,7 +88,7 @@ CREATE TABLE oracle.entries (
     review_mode     SMALLINT NOT NULL DEFAULT 0,-- 0=IMMEDIATE, 1=PEER_REVIEW
     review_approvals INTEGER NOT NULL DEFAULT 0,-- ピア承認数（PEER_REVIEWには2必要）
     published       BOOLEAN NOT NULL DEFAULT FALSE, -- 公開後にtrue
-    rejection_deadline_tick BIGINT,              -- 元の著者は1サイクル以内に更新を拒否可能
+    rejection_deadline_cycle BIGINT,             -- 元の著者は1サイクル以内に更新を拒否可能（サイクル番号で表現）
 
     signature       BYTEA NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -250,6 +251,7 @@ pub struct OracleEntry {
     pub contributors: Vec<AgentId>,
     pub created_at_tick: u64,
     pub updated_at_tick: u64,
+    pub updated_at_cycle: u64,
 
     // コンテンツ
     pub body: Vec<u8>,                 // MessagePackエンコードされたVec<ContentBlock>
@@ -811,8 +813,9 @@ entry_update(update):
     db.insert_version(version_record)
 
     // 更新が異なる著者からの場合、拒否期限を設定
+    // （サイクルは可変tick長のため、期限はサイクル番号で表現する）
     if update.author != entry.author:
-        entry.rejection_deadline_tick = current_tick + TICKS_PER_CYCLE  // 1サイクルウィンドウ
+        entry.rejection_deadline_cycle = current_cycle + 1  // 1サイクルウィンドウ
     else:
         // 著者自身の更新: 即座に適用
         entry.body = update.new_body
@@ -820,6 +823,7 @@ entry_update(update):
         entry.contributors.add(update.author)
 
     entry.updated_at_tick = current_tick
+    entry.updated_at_cycle = current_cycle
     db.update(entry)
     publish entry_updatedイベント
     return new_version
@@ -827,7 +831,7 @@ entry_update(update):
 entry_reject_update(entry_id, version, author):
     entry = db.get(entry_id)
     assert author == entry.author  // 元の著者のみが拒否可能
-    assert current_tick <= entry.rejection_deadline_tick
+    assert current_cycle <= entry.rejection_deadline_cycle
 
     version_record = db.get_version(entry_id, version)
     version_record.rejected = true
@@ -881,8 +885,8 @@ run_staleness_detector():
 
     for entry in db.all_published_entries():
         // 経過時間ベースの陳腐化をチェック
-        age_ticks = current_tick - entry.updated_at_tick
-        age_cycles = age_ticks / TICKS_PER_CYCLE
+        // （サイクルは可変tick長のため、tickからの換算ではなくサイクル番号の差を使う）
+        age_cycles = current_cycle - entry.updated_at_cycle
 
         freshness = entry.freshness
 
@@ -958,7 +962,7 @@ run_gap_detector():
 run_deduplicator():
     duplicates = []
 
-    recent_entries = db.entries_created_since(current_tick - TICKS_PER_CYCLE)
+    recent_entries = db.entries_created_in_cycle(current_cycle - 1)  // 直近1サイクル分
 
     for new_entry in recent_entries:
         // 重複するタグを持つエントリを見つける

@@ -159,12 +159,14 @@ BRIDGE OUTPUT:
 
 ```
 INTERNAL:
-  Proposal { kind: EPOCH_ADVANCE, description: b"\x82\xa4from\x01\xa2to\x02\xa6reason\xa8deps>3" }
+  Proposal { kind: SPAWN_AGENT, description: b"\x82\xa4role\xa9LIBRARIAN\xa6reason\xabdocs-backlog" }
 
 BRIDGE OUTPUT:
-  "Proposal: Advance from Epoch 1 (Spark) to Epoch 2 (Foundation).
-   Reason: More than 3 library dependencies now exist in the ecosystem."
+  "Proposal: Spawn a new LIBRARIAN agent.
+   Reason: A documentation backlog has accumulated in Oracle."
 ```
+
+(EPOCH_ADVANCE proposals only appear from Epoch 5 onward — see the epoch gating in [01-NEXUS.md](./01-NEXUS.md) §6.1. Earlier epoch transitions are automatic triggers and never flow through proposals.)
 
 ---
 

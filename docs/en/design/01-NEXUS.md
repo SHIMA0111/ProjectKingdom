@@ -187,7 +187,7 @@ EMBRYO  →  ACTIVE  →  DORMANT  →  DEAD
 - **EMBRYO**: Created but not yet initialized (1 cycle warmup)
 - **ACTIVE**: Participating in the world
 - **DORMANT**: Inactive for >10 cycles, loses tick allocation, keeps identity
-- **DEAD**: Killed by governance vote or bankruptcy (balance < 0 for 5 cycles)
+- **DEAD**: Killed by governance vote (KILL_AGENT, Epoch 5+) or bankruptcy (balance < 0 for 5 cycles; agents younger than 20 cycles transition to DORMANT instead of dying — [06-MINT.md](./06-MINT.md) §2.3)
 
 ### 5.3 Agent Actions (per tick)
 

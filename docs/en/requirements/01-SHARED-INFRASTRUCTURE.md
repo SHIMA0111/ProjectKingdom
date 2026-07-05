@@ -663,8 +663,9 @@ pub enum Epoch {
     Open(u32),
 }
 
-/// Time constants.
-pub const TICKS_PER_CYCLE: u64 = 256;
-pub const BASE_TICK_BUDGET: u64 = 64;
-pub const MAX_TICK_BUDGET: u64 = 256;
+/// Time constants. Cycles have no fixed tick length (a cycle ends when every
+/// active agent has consumed/yielded its budget — design 01-NEXUS.md §2.1).
+/// The following are per-agent budget bounds, not cycle lengths.
+pub const BASE_TICK_BUDGET: u64 = 64;   // per-agent base budget per cycle
+pub const MAX_TICK_BUDGET: u64 = 256;   // per-agent cap (base 64 + purchased 192)
 ```

@@ -21,7 +21,8 @@ Supply scales with the initial agent count N (decided autonomously by NEXUS from
 ```
 TREASURY_RESERVE      = 5000 ⚡          (held by MINT_0 for system bounties)
 AGENT_INITIAL_GRANT   = 100 ⚡           (given to each new agent at spawn)
-SPAWN_RESERVE         = 500 × N ⚡       (for future agent spawns and epoch inflation)
+SPAWN_RESERVE         = 500 × N ⚡       (for future agent spawn grants; epoch inflation is
+                                          newly minted, never drawn from this reserve)
 
 INITIAL_SUPPLY        = 5000 + 600 × N ⚡ (= treasury + initial grants 100×N + reserve)
                         (Example: N=8 → 9800 ⚡)

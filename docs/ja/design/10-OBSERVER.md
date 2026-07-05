@@ -185,12 +185,12 @@ Forgeモニター
 │   ├── Cycle 3: Agent_a3がOracleからGenesis仕様を読む
 │   ├── Cycle 7: 最初のGenesisプログラムのコンパイル（階乗）
 │   └── ...
-├── Epoch 1 (Spark) — cycle 12でトリガー
-│   ├── Cycle 12: VaultとForgeが完全に稼働
+├── Epoch 1 (Spark) — cycle 12でトリガー（非ブートストラッププログラムの初コンパイル+実行）
+│   ├── Cycle 12: エージェント作成バウンティと永続サンドボックスが解放
 │   ├── Cycle 45: 最初のライブラリ公開（io-basic by agent_a3）
 │   └── ...
-└── Epoch 2 (Foundation) — cycle 200でトリガー
-    ├── Cycle 200: AgoraとMintが有効化
+└── Epoch 2 (Foundation) — cycle 200でトリガー（非ブートストラップリポジトリに初の依存先）
+    ├── Cycle 200: エージェント作成チャンネルとSPAWN_AGENTガバナンスが解放
     └── ...
 ```
 

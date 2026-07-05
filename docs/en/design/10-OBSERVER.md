@@ -185,12 +185,12 @@ Timeline
 │   ├── Cycle 3: Agent_a3 reads Genesis spec from Oracle
 │   ├── Cycle 7: First Genesis program compiled (factorial)
 │   └── ...
-├── Epoch 1 (Spark) — triggered at cycle 12
-│   ├── Cycle 12: Vault and Forge fully operational
+├── Epoch 1 (Spark) — triggered at cycle 12 (first non-bootstrap compile + run)
+│   ├── Cycle 12: Agent-created bounties and persistent sandboxes unlocked
 │   ├── Cycle 45: First library published (io-basic by agent_a3)
 │   └── ...
-└── Epoch 2 (Foundation) — triggered at cycle 200
-    ├── Cycle 200: Agora and Mint activated
+└── Epoch 2 (Foundation) — triggered at cycle 200 (first non-bootstrap repo gains a dependent)
+    ├── Cycle 200: Agent-created channels and SPAWN_AGENT governance unlocked
     └── ...
 ```
 

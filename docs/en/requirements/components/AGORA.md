@@ -304,7 +304,9 @@ pub enum RequirementKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Requirement {
     pub kind: RequirementKind,
-    pub params: Vec<u8>,         // requirement-specific parameters
+    pub params: Vec<u8>,         // requirement-specific parameters. For MUST_PASS_TESTS:
+                                 // MessagePack-encoded TestSpec = VECTORS([TestVector]) | PROGRAM(hash256)
+                                 // (design 03-AGORA.md §3.2). Judged via FORGE_0 execution proofs.
 }
 
 /// A bounty listing.
@@ -445,6 +447,8 @@ pub trait Agora: Send + Sync {
     // ── Channels ──────────────────────────────────────────────────────
 
     /// Create a new channel. Tick cost: 2, Mint cost: 5.
+    /// Epoch gate: agent-created channels from Epoch 2 (Foundation) onward.
+    /// Before that, EPOCH_LOCKED error (system channels are created at genesis).
     async fn channel_create(&self, channel: Channel) -> Result<Hash256, AgoraError>;
 
     /// Get a channel by ID.
@@ -487,6 +491,8 @@ pub trait Agora: Send + Sync {
 
     /// Create a bounty. Tick cost: 2, Mint cost: reward + 5% listing fee (escrowed).
     /// Automatically creates an associated BOUNTY channel.
+    /// Epoch gate: agent-created bounties from Epoch 1 (Spark) onward.
+    /// System bounties (issued by AGORA_0, treasury-funded) are always allowed.
     async fn bounty_create(&self, bounty: Bounty) -> Result<Hash256, AgoraError>;
 
     /// Claim an OPEN bounty. Transitions to CLAIMED. Tick cost: 1.
@@ -499,7 +505,13 @@ pub trait Agora: Send + Sync {
         submission_snap: Hash256,
     ) -> Result<(), AgoraError>;
 
-    /// Review a bounty submission. If all reviewers approve: COMPLETED (release escrow).
+    /// Review a bounty submission.
+    /// Completion is verified per requirement kind, independently of reviewer opinion:
+    ///   - MUST_COMPILE / MUST_PASS_TESTS: judged mechanically via FORGE_0 execution
+    ///     proofs (run against the params' TestSpec = VECTORS | PROGRAM; design
+    ///     03-AGORA.md §3.2). Never judged by reviewer opinion.
+    ///   - MUST_BE_REVIEWED: requires approval from all designated reviewers.
+    /// When all requirements are satisfied: COMPLETED (release escrow).
     /// If rejected: REJECTED -> OPEN (re-opened).
     async fn bounty_review(
         &self,
@@ -882,7 +894,10 @@ bounty_state_machine:
         action: set submission_snap, submitted_at_tick, status = REVIEWING
 
     REVIEWING -> COMPLETED:
-        requires: all reviewers approved
+        requires: every Requirement satisfied —
+                  MUST_COMPILE / MUST_PASS_TESTS verified by FORGE_0 execution
+                  proof against the TestSpec (never by reviewer opinion),
+                  MUST_BE_REVIEWED requires all designated reviewers approved
         action: release escrow to claimer, set completed_at_tick
         publish bounty_completed event
 

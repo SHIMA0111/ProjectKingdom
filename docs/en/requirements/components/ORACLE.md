@@ -65,6 +65,7 @@ CREATE TABLE oracle.entries (
     contributors    BYTEA[] NOT NULL DEFAULT '{}', -- array of agent_ids
     created_at_tick BIGINT NOT NULL,
     updated_at_tick BIGINT NOT NULL,
+    updated_at_cycle BIGINT NOT NULL,           -- cycles have variable tick length; use this for age-in-cycles math
 
     -- Content
     body            BYTEA NOT NULL,             -- MessagePack-encoded structured content (ContentBlock tree)
@@ -87,7 +88,7 @@ CREATE TABLE oracle.entries (
     review_mode     SMALLINT NOT NULL DEFAULT 0,-- 0=IMMEDIATE, 1=PEER_REVIEW
     review_approvals INTEGER NOT NULL DEFAULT 0,-- count of peer approvals (needs 2 for PEER_REVIEW)
     published       BOOLEAN NOT NULL DEFAULT FALSE, -- true once live
-    rejection_deadline_tick BIGINT,              -- original author can reject updates within 1 cycle
+    rejection_deadline_cycle BIGINT,             -- original author can reject updates within 1 cycle (expressed as a cycle number)
 
     signature       BYTEA NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -250,6 +251,7 @@ pub struct OracleEntry {
     pub contributors: Vec<AgentId>,
     pub created_at_tick: u64,
     pub updated_at_tick: u64,
+    pub updated_at_cycle: u64,
 
     // Content
     pub body: Vec<u8>,                 // MessagePack-encoded Vec<ContentBlock>
@@ -813,7 +815,8 @@ entry_update(update):
 
     // If update is from a different author, set rejection deadline
     if update.author != entry.author:
-        entry.rejection_deadline_tick = current_tick + TICKS_PER_CYCLE  // 1 cycle window
+        // (cycles have variable tick length, so deadlines are expressed as cycle numbers)
+        entry.rejection_deadline_cycle = current_cycle + 1  // 1 cycle window
     else:
         // Author's own update: apply immediately
         entry.body = update.new_body
@@ -821,6 +824,7 @@ entry_update(update):
         entry.contributors.add(update.author)
 
     entry.updated_at_tick = current_tick
+    entry.updated_at_cycle = current_cycle
     db.update(entry)
     publish entry_updated event
     return new_version
@@ -828,7 +832,7 @@ entry_update(update):
 entry_reject_update(entry_id, version, author):
     entry = db.get(entry_id)
     assert author == entry.author  // only original author can reject
-    assert current_tick <= entry.rejection_deadline_tick
+    assert current_cycle <= entry.rejection_deadline_cycle
 
     version_record = db.get_version(entry_id, version)
     version_record.rejected = true
@@ -882,8 +886,8 @@ run_staleness_detector():
 
     for entry in db.all_published_entries():
         // Check age-based staleness
-        age_ticks = current_tick - entry.updated_at_tick
-        age_cycles = age_ticks / TICKS_PER_CYCLE
+        // (cycles have variable tick length; use the cycle-number difference, not tick math)
+        age_cycles = current_cycle - entry.updated_at_cycle
 
         freshness = entry.freshness
 
@@ -959,7 +963,7 @@ run_gap_detector():
 run_deduplicator():
     duplicates = []
 
-    recent_entries = db.entries_created_since(current_tick - TICKS_PER_CYCLE)
+    recent_entries = db.entries_created_in_cycle(current_cycle - 1)  // most recent full cycle
 
     for new_entry in recent_entries:
         // Find entries with overlapping tags
