@@ -118,6 +118,7 @@ pub struct Account {
     pub total_earned: u64,     // 生涯獲得（単調増加）
     pub total_spent: u64,      // 生涯支出（単調増加）
     pub created_at: u64,       // アカウント作成時のティック
+    pub debt_frozen: bool,     // 若齢保護により債務凍結中（凍結中は破産カウンター停止 —— デザイン 06-MINT.md §2.3）
 }
 ```
 
@@ -283,6 +284,7 @@ CREATE TABLE mint.accounts (
     locked          BIGINT NOT NULL DEFAULT 0,   -- CHECK (locked >= 0)
     total_earned    BIGINT NOT NULL DEFAULT 0,   -- CHECK (total_earned >= 0)
     total_spent     BIGINT NOT NULL DEFAULT 0,   -- CHECK (total_spent >= 0)
+    debt_frozen     BOOLEAN NOT NULL DEFAULT FALSE, -- 若齢保護による債務凍結（デザイン 06-MINT.md §2.3）
     created_at      BIGINT NOT NULL,             -- ティック
     bankruptcy_cycles SMALLINT NOT NULL DEFAULT 0,
     CONSTRAINT locked_non_negative CHECK (locked >= 0),
@@ -412,6 +414,11 @@ pub trait MintLedger: Send + Sync {
     /// マイナス残高のすべてのエージェントの破産チェックを処理。
     async fn process_bankruptcy(&self, cycle: u64) -> Result<Vec<AgentId>, MintError>;
 
+    /// 若齢保護のグレースピリオド中、破産エージェントのマイナス残高を凍結する
+    /// （デザイン 06-MINT.md §2.3）。凍結中は破産サイクルカウンターが進まない。
+    /// トレジャリー助成金または他エージェントの出資による再アクティブ化で解凍される。
+    async fn freeze_debt(&self, agent_id: AgentId) -> Result<(), MintError>;
+
     /// 期限超過エスクローを失効（期限後に自動返金）。
     async fn expire_escrows(&self, current_tick: u64) -> Result<u32, MintError>;
 }
@@ -454,6 +461,7 @@ pub trait MintLedger: Send + Sync {
 | `0x5040` | `BANKRUPTCY_WARNING` | `{ agent: AgentId, cycle: u64, balance: i64 }` | エージェントマイナス残高検出 |
 | `0x5041` | `BANKRUPTCY_SEVERE` | `{ agent: AgentId, cycle: u64, budget_reduction_pct: u64 }` | サイクル4深刻な削減 |
 | `0x5042` | `AGENT_BANKRUPT_DEAD` | `{ agent: AgentId, assets_to_treasury: u64 }` | サイクル5エージェントDEAD |
+| `0x5043` | `AGENT_BANKRUPT_GRACE` | `{ agent: AgentId, frozen_debt: i64 }` | 若齢保護によるDORMANT遷移+債務凍結（デザイン 06-MINT.md §2.3） |
 | `0x5050` | `INTERVENTION_PROPOSED` | `Intervention { kind, reason }` | 経済介入が必要 |
 
 ---

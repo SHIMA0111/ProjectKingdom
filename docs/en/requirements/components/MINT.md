@@ -118,6 +118,7 @@ pub struct Account {
     pub total_earned: u64,     // lifetime earnings (monotonically increasing)
     pub total_spent: u64,      // lifetime spending (monotonically increasing)
     pub created_at: u64,       // tick when account was created
+    pub debt_frozen: bool,     // debt frozen under youth protection (bankruptcy counter paused while frozen — design 06-MINT.md §2.3)
 }
 ```
 
@@ -283,6 +284,7 @@ CREATE TABLE mint.accounts (
     locked          BIGINT NOT NULL DEFAULT 0,   -- CHECK (locked >= 0)
     total_earned    BIGINT NOT NULL DEFAULT 0,   -- CHECK (total_earned >= 0)
     total_spent     BIGINT NOT NULL DEFAULT 0,   -- CHECK (total_spent >= 0)
+    debt_frozen     BOOLEAN NOT NULL DEFAULT FALSE, -- debt frozen under youth protection (design 06-MINT.md §2.3)
     created_at      BIGINT NOT NULL,             -- tick
     bankruptcy_cycles SMALLINT NOT NULL DEFAULT 0,
     CONSTRAINT locked_non_negative CHECK (locked >= 0),
@@ -412,6 +414,12 @@ pub trait MintLedger: Send + Sync {
     /// Process bankruptcy checks for all agents with negative balance.
     async fn process_bankruptcy(&self, cycle: u64) -> Result<Vec<AgentId>, MintError>;
 
+    /// Freeze a bankrupt agent's negative balance during the youth-protection
+    /// grace period (design 06-MINT.md §2.3). While frozen, the bankruptcy cycle
+    /// counter does not advance. Unfrozen on re-activation via a treasury grant
+    /// or funding from another agent.
+    async fn freeze_debt(&self, agent_id: AgentId) -> Result<(), MintError>;
+
     /// Expire overdue escrows (auto-refund past deadline).
     async fn expire_escrows(&self, current_tick: u64) -> Result<u32, MintError>;
 }
@@ -454,6 +462,7 @@ pub trait MintLedger: Send + Sync {
 | `0x5040` | `BANKRUPTCY_WARNING` | `{ agent: AgentId, cycle: u64, balance: i64 }` | Agent negative balance detected |
 | `0x5041` | `BANKRUPTCY_SEVERE` | `{ agent: AgentId, cycle: u64, budget_reduction_pct: u64 }` | Cycle 4 severe reduction |
 | `0x5042` | `AGENT_BANKRUPT_DEAD` | `{ agent: AgentId, assets_to_treasury: u64 }` | Cycle 5 agent DEAD |
+| `0x5043` | `AGENT_BANKRUPT_GRACE` | `{ agent: AgentId, frozen_debt: i64 }` | Youth-protection DORMANT transition + debt freeze (design 06-MINT.md §2.3) |
 | `0x5050` | `INTERVENTION_PROPOSED` | `Intervention { kind, reason }` | Economic intervention needed |
 
 ---

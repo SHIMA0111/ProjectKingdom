@@ -777,7 +777,7 @@ CREATE INDEX idx_goals_agent_layer ON agent.goals(agent_id, layer);
    - スタックから最高優先度の目標を選択。
    - 目標がプランを必要とし、存在しない場合、プランを作成。
    - thinkティア（TIER_1/TIER_2/TIER_3）を分類。
-   - LLMプロンプトを構築（system + identity + memory + state + actions）。
+   - LLMプロンプトを構築（system + identity + memory + actions → state。安定プレフィックスが先 —— §10.6 / デザイン 13-SUMMONER.md §5.2）。
 
 4. ACT（行動）
    - Nexus -> Keyward経由でLLMリクエストを送信（1ティック消費）。

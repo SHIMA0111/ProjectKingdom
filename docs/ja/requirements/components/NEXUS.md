@@ -684,9 +684,8 @@ cycle_maintenance():
             agent.balance_negative_cycles = 0
         if agent.balance_negative_cycles >= 5:
             if current_cycle - cycle_of(agent.spawn_tick) < BANKRUPTCY_GRACE_CYCLES:
-                update_status(agent, DORMANT)
-                mint.freeze_debt(agent.id)
-                publish agent_dormant(BankruptcyGrace)
+                update_status(agent, DORMANT)   // agent_status_changeイベントを発行
+                mint.freeze_debt(agent.id)      // MintがAGENT_BANKRUPT_GRACE (0x5043)を発行
             else:
                 update_status(agent, DEAD)
                 publish agent_kill(Bankruptcy)

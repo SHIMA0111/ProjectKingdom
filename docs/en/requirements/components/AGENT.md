@@ -777,7 +777,7 @@ The unit of agent cognition is the **think** (1 think = 1 LLM call = 1 tick). On
    - Select highest-priority goal from the stack.
    - If the goal requires a plan and none exists, create a plan.
    - Classify the think tier (TIER_1/TIER_2/TIER_3).
-   - Build the LLM prompt (system + identity + memory + state + actions).
+   - Build the LLM prompt (system + identity + memory + actions → state; stable prefix first — see §10.6 / design 13-SUMMONER.md §5.2).
 
 4. ACT
    - Send LLM request via Nexus -> Keyward (consumes 1 tick).
