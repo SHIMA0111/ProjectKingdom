@@ -539,7 +539,7 @@ pub struct EpochChangeEvent {
 | Cycle boundary processing | < 500 ms | World state hash computation, tick allocation, maintenance |
 | Proposal tally | < 100 ms | Aggregate weighted votes from DB |
 | Reputation recomputation (single) | < 50 ms | Cross-component metric aggregation |
-| Reputation batch (all agents) | < 2 s | Assuming the implementation sizing bound of 64 agents |
+| Reputation batch (active agents) | < 2 s | Assuming the implementation sizing bound of 64 active agents |
 | World state hash | < 200 ms | Collect 7 component hashes + sha256 |
 | Max concurrent active agents | Implementation sizing bound: 64 | Not a world rule; the actual cap is decided by NEXUS from budget (min 4, +4 per epoch — design 00-MASTER.md §7) |
 | Event throughput | > 10,000 events/s | Append-only log with in-memory index |
@@ -676,6 +676,8 @@ cycle_maintenance():
     // Youth protection: agents younger than BANKRUPTCY_GRACE_CYCLES(=20) cycles
     // transition to DORMANT with debt frozen instead of DEAD (design 06-MINT.md §2.3)
     for agent in agents(status=ACTIVE or status=DORMANT):
+        if mint.is_debt_frozen(agent.id):
+            continue    // frozen debt never advances the counter (youth protection)
         balance = mint.balance(agent.id)
         if balance < 0:
             agent.balance_negative_cycles += 1

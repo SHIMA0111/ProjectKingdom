@@ -496,10 +496,13 @@ fn handle_request(req: PortalRequest) -> Result<PortalResponse>:
     emit CACHE_STORED
 
     // 7.5. 決定論的リプレイのための記録（デザイン 07-PORTAL.md §3.4、01-NEXUS.md §4.5）
-    //      すべてのレスポンスをWEB_RESPONSE外部入力として封印済み入力ストアに記録する。
+    //      レスポンスを完全に再構築できるよう、フィルタ済み本文だけでなく
+    //      レスポンス封筒全体（ステータス、content_type、FilterReportを含む）を
+    //      WEB_RESPONSE外部入力として封印済み入力ストアに記録する。
     //      バス上のイベントにはcontent_hashのみが載る。リプレイ時はreqwest_fetchを
-    //      実行せず、記録済みレスポンスを返す。
-    record_sealed_input(WEB_RESPONSE, sha256(filtered_content), filtered_content)
+    //      実行せず、記録済み封筒からPortalResponseを再構築して返す。
+    envelope = { status: http_response.status, content_type, filtered_content, filter_report }
+    record_sealed_input(WEB_RESPONSE, sha256(msgpack(envelope)), msgpack(envelope))
 
     // 8. コスト課金
     cost = match req.method:

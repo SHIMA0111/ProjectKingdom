@@ -540,7 +540,7 @@ pub struct EpochChangeEvent {
 | サイクル境界処理 | < 500 ms | ワールド状態ハッシュ計算、ティック割り当て、メンテナンス |
 | 提案集計 | < 100 ms | DBから加重投票を集計 |
 | レピュテーション再計算（単一）| < 50 ms | クロスコンポーネントメトリック集約 |
-| レピュテーションバッチ（全エージェント）| < 2 s | 実装サイジング上限64エージェントを想定 |
+| レピュテーションバッチ（アクティブエージェント）| < 2 s | 実装サイジング上限64アクティブエージェントを想定 |
 | ワールド状態ハッシュ | < 200 ms | 7コンポーネントハッシュ収集 + sha256 |
 | 最大同時アクティブエージェント | 実装サイジング上限: 64 | ワールドルールではない。実際の上限はNEXUSが予算から決定（最小4、エポックごとに+4 —— デザイン 00-MASTER.md §7） |
 | イベントスループット | > 10,000イベント/秒 | インメモリインデックス付き追記専用ログ |
@@ -677,6 +677,8 @@ cycle_maintenance():
     // 若齢保護: 生成からBANKRUPTCY_GRACE_CYCLES(=20)サイクル未満のエージェントは
     // DEADにせずDORMANTに遷移し、債務を凍結する（デザイン 06-MINT.md §2.3）
     for agent in agents(status=ACTIVE or status=DORMANT):
+        if mint.is_debt_frozen(agent.id):
+            continue    // 凍結中はカウンターを進めない（若齢保護）
         balance = mint.balance(agent.id)
         if balance < 0:
             agent.balance_negative_cycles += 1

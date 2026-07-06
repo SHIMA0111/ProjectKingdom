@@ -499,6 +499,7 @@ fn run(machine: &mut ForgeMachine) -> ExecResult:
             ADD => machine.registers[rd] = rs1_val.wrapping_add(rs2_val); update_flags()
             DIV => if rs2_val == 0 { fault(DivideByZero) } else { rd = rs1 / rs2 }
             DIVS => if rs2_val == 0 { fault(DivideByZero) } else { rd = (rs1 as i64).wrapping_div(rs2 as i64) as u64 }
+            MODS => if rs2_val == 0 { fault(DivideByZero) } else { rd = (rs1 as i64).wrapping_rem(rs2 as i64) as u64 }
             SAR  => rd = ((rs1_val as i64) >> (rs2_val % 64)) as u64
             JLTS => if (rs1_val as i64) < (rs2_val as i64) { pc = addr; continue }
             LOAD => bounds_check(addr); rd = memory[addr]

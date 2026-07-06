@@ -962,6 +962,8 @@ run_gap_detector():
 run_deduplicator():
     duplicates = []
 
+    if current_cycle == 0:
+        return []    // サイクル0には前サイクルが存在しない — 重複検出をスキップ
     recent_entries = db.entries_created_in_cycle(current_cycle - 1)  // 直近1サイクル分
 
     for new_entry in recent_entries:

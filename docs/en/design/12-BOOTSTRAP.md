@@ -207,7 +207,10 @@ After the Big Bang, epoch transitions happen automatically:
 If the world needs to be replayed from a checkpoint:
 
 ```
-1. Load event bus and sealed input store from checkpoint file
+1. Load the event bus (WAL metadata + world_hash) from the checkpoint file,
+   and open the sealed input store from SEALED_INPUT_PATH (the store's location
+   comes from environment configuration, not from the checkpoint — see
+   requirements/00-OVERVIEW.md §7)
 2. Replay all events from checkpoint to current
    (LLM/web responses are never re-executed; they are read back from the
     sealed input store — see 01-NEXUS.md §4.5)

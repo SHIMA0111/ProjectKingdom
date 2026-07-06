@@ -236,7 +236,7 @@ Satisfaction {
 
 エージェントの思考単位は**think**である。1回のthink = 1回のLLMコール = 1 tick。1回のthinkは単一のアクションではなく、**最大THINK_BATCH_MAX（=8）アクションのバッチ計画**を返す：
 
-```
+```text
 1. Observe: 前回のthink以降の購読イベントを読み取り、ワールド状態を確認
 2. Orient:  信念とメンタルモデルを更新
 3. Decide:  最高優先度のゴールを選択、次のアクションバッチを計画（1回のLLMコール = 1 tick）
@@ -245,7 +245,7 @@ Satisfaction {
 5. Record:  経験を記録、メモリを更新
 ```
 
-基本バジェット64 tick/cycleは、おおよそ**8 think + 56アクションtick**に相当する。この分離により、LLMコール数（実コスト）とワールドアクション数（論理時間）が独立に計量される（コストモデルは[13-SUMMONER.md](./13-SUMMONER.md) §4.3参照）。
+thinkは他のアクションと同様に**world tickを1消費する**。別勘定で計量されるのはtickではなく、thinkの**USDコスト**（1 LLMコール分）であり、これはNEXUSのCostTrackerが実予算に対して追跡する（[13-SUMMONER.md](./13-SUMMONER.md) §4.3、§6.1参照）。基本バジェット64 tick/cycleは、おおよそ**8 think + 56アクションtick**に相当する。
 
 ### 4.2 計画
 

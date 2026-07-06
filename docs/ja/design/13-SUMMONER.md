@@ -228,7 +228,9 @@ if burn_rate > planned_rate * 1.3 {
   // オプション（NEXUSが自律的に決定）:
   option_a: エージェント数の削減（最も非アクティブなエージェントをDORMANTに）
   option_b: 一部エージェントをTIER_3モデルにダウングレード
-  option_c: think頻度の低減（1 thinkあたりのアクションバッチ上限THINK_BATCH_MAXの引き上げ）
+  option_c: think頻度の低減（各thinkにTHINK_BATCH_MAX（=8、固定定数）の上限まで
+            バッチを満たすよう促し、think間の間隔を延ばす。上限自体は変更しない ——
+            レスポンススキーマとパーサが依存する公開定数のため）
 }
 
 // 予算に余裕がある場合

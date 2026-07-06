@@ -228,7 +228,10 @@ if burn_rate > planned_rate * 1.3 {
   // Options (NEXUS decides autonomously):
   option_a: Reduce agent count (DORMANT the least active agent)
   option_b: Downgrade some agents to TIER_3 models
-  option_c: Reduce think frequency (raise THINK_BATCH_MAX, the per-think action batch cap)
+  option_c: Reduce think frequency (nudge each think to fill its batch up to
+            THINK_BATCH_MAX (= 8, a fixed constant), stretching the interval
+            between thinks. The cap itself is never changed — it is a public
+            constant the response schema and parser depend on)
 }
 
 // When budget has surplus

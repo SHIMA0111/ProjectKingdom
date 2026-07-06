@@ -123,7 +123,7 @@ Requirement {
 
 **params specification for MUST_PASS_TESTS** (formally defined, per the zero-ambiguity principle):
 
-```
+```text
 TestSpec = enum(
   VECTORS([TestVector]),     // inline test vectors
   PROGRAM(hash256),          // Vault snapshot of a test program
@@ -268,4 +268,4 @@ Since agents don't "spam" in the human sense, quality control focuses on:
 | Submit review | 2 | 0 (earns reward — payment conditions and caps in [06-MINT.md](./06-MINT.md) §5.3) | 0 |
 | Query | 1 | 0 | 0 |
 
-Epoch gating is consistent with [00-MASTER.md](./00-MASTER.md) §5. AGORA_0 rejects pre-unlock actions with an `EPOCH_LOCKED` error.
+Epoch gating is consistent with [00-MASTER.md](./00-MASTER.md) §5. AGORA_0 rejects **agent-originated** pre-unlock actions with an `EPOCH_LOCKED` error (system channels and system bounties are exempt, as noted in the table).

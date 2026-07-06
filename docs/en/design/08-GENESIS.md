@@ -466,9 +466,13 @@ lvalue         = IDENT
                | postfix "->" IDENT ;
 
 (* ── Inline assembly ── *)
-asm_stmt       = "asm" [ "(" asm_binding { "," asm_binding } ")" ] "{" { ASM_LINE } "}" ";" ;
+asm_stmt       = "asm" [ "(" asm_binding { "," asm_binding } ")" ] "{" { asm_instruction } "}" ";" ;
 asm_binding    = "in" REGISTER "=" expression
                | "out" lvalue "=" REGISTER ;
+asm_instruction = MNEMONIC [ asm_operand { "," asm_operand } ] ;
+asm_operand    = REGISTER | INTEGER | IDENT ;                (* register / immediate / symbolic label *)
+MNEMONIC       = IDENT ;   (* one of the Forge mnemonics — the instruction set of
+                              05-FORGE.md §2.2. Unknown mnemonics are a compile error *)
 REGISTER       = "r" DIGIT { DIGIT } ;                       (* r0 – r255 *)
 (* "in"/"out" are contextual keywords recognized only inside the binding list *)
 

@@ -236,7 +236,7 @@ Experience → Belief Update → Goal Generation → Action → Experience
 
 The unit of agent cognition is the **think**. One think = one LLM call = 1 tick. A think returns not a single action but a **batch plan of up to THINK_BATCH_MAX (= 8) actions**:
 
-```
+```text
 1. Observe: Read subscribed events since the last think, check world state
 2. Orient:  Update beliefs and mental models
 3. Decide:  Select highest-priority goal, plan the next action batch (one LLM call = 1 tick)
@@ -245,7 +245,7 @@ The unit of agent cognition is the **think**. One think = one LLM call = 1 tick.
 5. Record:  Log experience, update memory
 ```
 
-The base budget of 64 ticks/cycle corresponds to roughly **8 thinks + 56 action ticks**. This separation meters LLM calls (real cost) and world actions (logical time) independently (see [13-SUMMONER.md](./13-SUMMONER.md) §4.3 for the cost model).
+A think consumes **1 world tick**, just like any other action. What is accounted for separately is not the tick but the think's **USD cost** (one LLM call), which NEXUS's CostTracker meters against the real-money budget (see [13-SUMMONER.md](./13-SUMMONER.md) §4.3 and §6.1). The base budget of 64 ticks/cycle corresponds to roughly **8 thinks + 56 action ticks**.
 
 ### 4.2 Planning
 

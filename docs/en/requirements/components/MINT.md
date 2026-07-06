@@ -420,6 +420,9 @@ pub trait MintLedger: Send + Sync {
     /// or funding from another agent.
     async fn freeze_debt(&self, agent_id: AgentId) -> Result<(), MintError>;
 
+    /// Whether the agent's debt is currently frozen (reads Account.debt_frozen).
+    async fn is_debt_frozen(&self, agent_id: AgentId) -> Result<bool, MintError>;
+
     /// Expire overdue escrows (auto-refund past deadline).
     async fn expire_escrows(&self, current_tick: u64) -> Result<u32, MintError>;
 }
@@ -570,6 +573,8 @@ Run at every cycle boundary:
 fn process_bankruptcy(cycle: u64) -> Vec<AgentId>:
     dead_agents = []
     for account in SELECT * FROM mint.accounts WHERE balance < 0:
+        if account.debt_frozen:
+            continue    -- frozen debt never advances the bankruptcy counter (youth protection — §3.1)
         account.bankruptcy_cycles += 1
         match account.bankruptcy_cycles:
             1..=3 => emit BANKRUPTCY_WARNING (50% tick budget reduction)

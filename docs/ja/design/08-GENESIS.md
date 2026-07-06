@@ -465,9 +465,13 @@ lvalue         = IDENT
                | postfix "->" IDENT ;
 
 (* ── インラインアセンブリ ── *)
-asm_stmt       = "asm" [ "(" asm_binding { "," asm_binding } ")" ] "{" { ASM_LINE } "}" ";" ;
+asm_stmt       = "asm" [ "(" asm_binding { "," asm_binding } ")" ] "{" { asm_instruction } "}" ";" ;
 asm_binding    = "in" REGISTER "=" expression
                | "out" lvalue "=" REGISTER ;
+asm_instruction = MNEMONIC [ asm_operand { "," asm_operand } ] ;
+asm_operand    = REGISTER | INTEGER | IDENT ;                (* レジスタ / 即値 / シンボリックラベル *)
+MNEMONIC       = IDENT ;   (* Forgeニーモニックのいずれか — 05-FORGE.md §2.2の命令セット。
+                              未知のニーモニックはコンパイルエラー *)
 REGISTER       = "r" DIGIT { DIGIT } ;                       (* r0 〜 r255 *)
 (* "in"/"out"は束縛リスト内でのみ認識される文脈キーワード *)
 

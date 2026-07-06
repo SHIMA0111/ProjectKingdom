@@ -123,7 +123,7 @@ Requirement {
 
 **MUST_PASS_TESTSのparams仕様**（曖昧さゼロの原則に従い形式的に定義される）：
 
-```
+```text
 TestSpec = enum(
   VECTORS([TestVector]),     // インラインのテストベクター
   PROGRAM(hash256),          // テストプログラムのVaultスナップショット
@@ -268,4 +268,4 @@ AgoraQuery {
 | レビュー提出 | 2 | 0（報酬を得る —— 支払い条件と上限は[06-MINT.md](./06-MINT.md) §5.3参照） | 0 |
 | クエリ | 1 | 0 | 0 |
 
-エポックゲーティングは[00-MASTER.md](./00-MASTER.md) §5と整合する。解放前のアクションはAGORA_0が`EPOCH_LOCKED`エラーで拒否する。
+エポックゲーティングは[00-MASTER.md](./00-MASTER.md) §5と整合する。**エージェント起因の**解放前アクションはAGORA_0が`EPOCH_LOCKED`エラーで拒否する（システムチャンネル/システムバウンティは表の注記どおり例外）。

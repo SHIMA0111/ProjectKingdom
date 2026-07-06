@@ -419,6 +419,9 @@ pub trait MintLedger: Send + Sync {
     /// トレジャリー助成金または他エージェントの出資による再アクティブ化で解凍される。
     async fn freeze_debt(&self, agent_id: AgentId) -> Result<(), MintError>;
 
+    /// エージェントの債務が凍結中かどうかを返す（Account.debt_frozenの参照）。
+    async fn is_debt_frozen(&self, agent_id: AgentId) -> Result<bool, MintError>;
+
     /// 期限超過エスクローを失効（期限後に自動返金）。
     async fn expire_escrows(&self, current_tick: u64) -> Result<u32, MintError>;
 }
@@ -569,6 +572,8 @@ fn gini(balances: Vec<i64>) -> f32:
 fn process_bankruptcy(cycle: u64) -> Vec<AgentId>:
     dead_agents = []
     for account in SELECT * FROM mint.accounts WHERE balance < 0:
+        if account.debt_frozen:
+            continue    -- 凍結中は破産カウンターを進めない（若齢保護 — §3.1）
         account.bankruptcy_cycles += 1
         match account.bankruptcy_cycles:
             1..=3 => emit BANKRUPTCY_WARNING（50%ティック予算削減）

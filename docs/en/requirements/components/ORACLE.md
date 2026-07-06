@@ -963,6 +963,8 @@ run_gap_detector():
 run_deduplicator():
     duplicates = []
 
+    if current_cycle == 0:
+        return []    // no previous cycle exists at cycle 0 — skip deduplication
     recent_entries = db.entries_created_in_cycle(current_cycle - 1)  // most recent full cycle
 
     for new_entry in recent_entries:
