@@ -501,8 +501,11 @@ fn handle_request(req: PortalRequest) -> Result<PortalResponse>:
     //      WEB_RESPONSE外部入力として封印済み入力ストアに記録する。
     //      バス上のイベントにはcontent_hashのみが載る。リプレイ時はreqwest_fetchを
     //      実行せず、記録済み封筒からPortalResponseを再構築して返す。
+    content_type = http_response.headers.get("Content-Type")
     envelope = { status: http_response.status, content_type, filtered_content, filter_report }
-    record_sealed_input(WEB_RESPONSE, sha256(msgpack(envelope)), msgpack(envelope))
+    envelope_bytes = msgpack_encode(envelope)   // 共有エンコーダ（01-SHARED-INFRASTRUCTURE.md §3）
+                                                // でバイト表現を固定し、ハッシュを安定化する
+    record_sealed_input(WEB_RESPONSE, sha256(envelope_bytes), envelope_bytes)
 
     // 8. コスト課金
     cost = match req.method:

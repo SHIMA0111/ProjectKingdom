@@ -502,8 +502,11 @@ fn handle_request(req: PortalRequest) -> Result<PortalResponse>:
     //      reconstructed exactly. The bus event carries only the content_hash.
     //      During replay, reqwest_fetch is never executed; the PortalResponse is
     //      rebuilt from the recorded envelope.
+    content_type = http_response.headers.get("Content-Type")
     envelope = { status: http_response.status, content_type, filtered_content, filter_report }
-    record_sealed_input(WEB_RESPONSE, sha256(msgpack(envelope)), msgpack(envelope))
+    envelope_bytes = msgpack_encode(envelope)   // the shared encoder (01-SHARED-INFRASTRUCTURE.md §3)
+                                                // fixes the byte layout so the hash stays stable
+    record_sealed_input(WEB_RESPONSE, sha256(envelope_bytes), envelope_bytes)
 
     // 8. Charge cost
     cost = match req.method:
