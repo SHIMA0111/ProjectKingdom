@@ -232,17 +232,20 @@ Experience → Belief Update → Goal Generation → Action → Experience
 
 ## 4. Decision Making
 
-### 4.1 Action Selection Loop
+### 4.1 Action Selection Loop (Batch-Think Model)
 
-Each tick, an active agent runs:
+The unit of agent cognition is the **think**. One think = one LLM call = 1 tick. A think returns not a single action but a **batch plan of up to THINK_BATCH_MAX (= 8) actions**:
 
-```
-1. Observe: Read subscribed events, check world state
+```text
+1. Observe: Read subscribed events since the last think, check world state
 2. Orient:  Update beliefs and mental models
-3. Decide:  Select highest-priority goal, choose action
-4. Act:     Execute the action (spend tick)
+3. Decide:  Select highest-priority goal, plan the next action batch (one LLM call = 1 tick)
+4. Act:     Execute the batched actions in order (each action spends 1 tick)
+            On an unexpected event (fault, interrupt), discard the rest of the batch and go to the next think
 5. Record:  Log experience, update memory
 ```
+
+A think consumes **1 world tick**, just like any other action. What is accounted for separately is not the tick but the think's **USD cost** (one LLM call), which NEXUS's CostTracker meters against the real-money budget (see [13-SUMMONER.md](./13-SUMMONER.md) §4.3 and §6.1). The base budget of 64 ticks/cycle corresponds to roughly **8 thinks + 56 action ticks**.
 
 ### 4.2 Planning
 
@@ -312,6 +315,10 @@ Agents that find a profitable niche are rewarded. Agents that spread too thin ea
 
 ### 6.1 Initial Population (Epoch 0)
 
+The initial agent count **N** is not fixed. NEXUS decides it autonomously from budget and rate limits (min 4 — see `plan_civilization` in [13-SUMMONER.md](./13-SUMMONER.md) §4.3). Roles are distributed by the fixed ratios of §4.4 in that document, and each agent's traits are sampled with diversity around role archetypes (no two agents of the same role share identical traits). Everyone starts with initial reputation 0.5 and an initial grant of 100 ⚡.
+
+**Example composition for N=8**:
+
 ```
 Agent 1: COMPILER_SMITH  — traits: {risk: 0.3, collab: 0.5, depth: 0.2, quality: 0.2}
 Agent 2: COMPILER_SMITH  — traits: {risk: 0.7, collab: 0.3, depth: 0.3, quality: 0.6}
@@ -326,9 +333,9 @@ Agent 8: GENERALIST      — traits: {risk: 0.6, collab: 0.6, depth: 0.6, qualit
 ### 6.2 Population Growth
 
 New agents are spawned when:
-- An existing agent sponsors (50 ⚡ + governance vote)
-- Population drops below 4 (emergency spawn)
-- Epoch advances (max capacity increases by 4)
+- An existing agent sponsors (50 ⚡ + SPAWN_AGENT governance vote — unlocked from Epoch 2, see [00-MASTER.md](./00-MASTER.md) §5)
+- Population drops below 4 (emergency spawn — a "law of physics," no vote required)
+- Epoch advances (max capacity increases by 4 per epoch from the initial count N)
 
 ### 6.3 Death and Renewal
 

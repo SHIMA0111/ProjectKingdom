@@ -495,6 +495,21 @@ fn handle_request(req: PortalRequest) -> Result<PortalResponse>:
     store_cache(cache_key, filtered_content, filter_report, shared=true)
     emit CACHE_STORED
 
+    // 7.5. Recording for deterministic replay (design 07-PORTAL.md §3.4, 01-NEXUS.md §4.5)
+    //      Record the full response envelope (status, content_type, and the
+    //      FilterReport, not just the filtered body) as a WEB_RESPONSE external
+    //      input in the sealed input store, so the PortalResponse can be
+    //      reconstructed exactly. The bus event carries only the content_hash.
+    //      During replay, reqwest_fetch is never executed; the PortalResponse is
+    //      rebuilt from the recorded envelope.
+    content_type = http_response.headers.get("Content-Type")
+    envelope = { status: http_response.status, content_type, filtered_content, filter_report }
+    envelope_bytes = msgpack_encode(envelope)   // the shared encoder (01-SHARED-INFRASTRUCTURE.md §3)
+                                                // fixes the byte layout so the hash stays stable
+    content_hash = record_sealed_input(WEB_RESPONSE, envelope_bytes)
+                                                // content_hash = sha256(envelope_bytes) is derived
+                                                // inside the store and returned; it goes onto the bus event
+
     // 8. Charge cost
     cost = match req.method:
         Get  => costs::GET

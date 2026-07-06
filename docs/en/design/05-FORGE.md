@@ -4,6 +4,8 @@
 
 Forge is where code **runs**. It provides isolated, deterministic, metered execution sandboxes for AI agents. Every computation in the Kingdom happens inside Forge.
 
+**FM-ticks vs. world ticks**: VM instructions inside a Forge sandbox are metered as **FM-ticks**, accounted separately from **world ticks**, the agent action budget of [01-NEXUS.md](./01-NEXUS.md) §2. Issuing an `execute` action costs 1 world tick; the instructions that run inside the sandbox are deducted from the agent's FM-tick quota (base 100,000 FM-ticks/cycle, more purchasable with currency). Where this document says simply "tick" in a sandbox context, it means FM-tick.
+
 Forge is not a traditional VM or container. It is a **tick-metered abstract machine** designed for:
 - Deterministic replay of all computations
 - Fine-grained resource accounting
@@ -29,11 +31,12 @@ ForgeMachine {
   // Memory
   memory:      [u8; quota]      // linear byte-addressable memory
   heap_start:  u64
+  heap_end:    u64              // heap/stack boundary (fixed at sandbox creation)
   stack_start: u64
 
-  // Metering
-  tick_budget: u64              // remaining ticks
-  ticks_used:  u64              // consumed ticks
+  // Metering (FM-ticks — accounted separately from world ticks)
+  tick_budget: u64              // remaining FM-ticks
+  ticks_used:  u64              // consumed FM-ticks
 
   // I/O
   channels:    [IOChannel; 16]  // communication ports
@@ -48,12 +51,14 @@ ForgeMachine {
 The FM instruction set is minimal but complete:
 
 ```
-// Arithmetic
+// Arithmetic (ADD/SUB/MUL wrap in two's complement, sign-agnostic)
 ADD  rd, rs1, rs2      // rd = rs1 + rs2
 SUB  rd, rs1, rs2
 MUL  rd, rs1, rs2
-DIV  rd, rs1, rs2      // faults on divide by zero
-MOD  rd, rs1, rs2
+DIV  rd, rs1, rs2      // unsigned division; faults on divide by zero
+DIVS rd, rs1, rs2      // signed division (truncates toward zero); faults on divide by zero
+MOD  rd, rs1, rs2      // unsigned remainder; faults on divide by zero
+MODS rd, rs1, rs2      // signed remainder (sign follows the dividend); faults on divide by zero
 NEG  rd, rs1
 
 // Bitwise
@@ -62,7 +67,8 @@ OR   rd, rs1, rs2
 XOR  rd, rs1, rs2
 NOT  rd, rs1
 SHL  rd, rs1, rs2
-SHR  rd, rs1, rs2
+SHR  rd, rs1, rs2      // logical shift right
+SAR  rd, rs1, rs2      // arithmetic shift right (replicates the sign bit)
 
 // Memory
 LOAD  rd, rs1, offset   // rd = memory[rs1 + offset]
@@ -76,7 +82,8 @@ POP   rd                // pop from stack
 JMP   addr
 JZ    rs1, addr          // jump if zero
 JNZ   rs1, addr          // jump if not zero
-JLT   rs1, rs2, addr     // jump if less than
+JLT   rs1, rs2, addr     // jump if less than (unsigned comparison)
+JLTS  rs1, rs2, addr     // jump if less than (signed comparison)
 CALL  addr               // push PC, jump
 RET                      // pop PC, jump back
 
@@ -89,19 +96,21 @@ FAULT code               // trigger a fault
 NOP                      // no operation (costs 1 tick)
 
 // I/O
-SEND  channel, rs1, len  // send bytes to channel
-RECV  channel, rd, maxlen // receive bytes from channel (blocks if empty)
-POLL  channel, rd        // non-blocking check for data
+SEND  channel, rs1, len  // send the memory buffer (start address = rs1,
+                         // length = len bytes) to the channel
+RECV  channel, rd, maxlen // receive up to maxlen bytes from the channel and
+                          // write them to memory at the address in rd (blocks if empty)
+POLL  channel, rd        // non-blocking check for data (available byte count into rd)
 
 // Metering
-TICK                     // yield 1 tick (for cooperative scheduling)
-BUDGET rd                // read remaining tick budget into rd
+TICK                     // yield 1 FM-tick (for cooperative scheduling)
+BUDGET rd                // read remaining FM-tick budget into rd
 ```
 
-Each instruction costs exactly **1 tick** except:
-- `MUL`, `DIV`, `MOD`: 2 ticks
-- `SEND`, `RECV`: 3 ticks
-- `CALL`, `RET`: 2 ticks
+Each instruction costs exactly **1 FM-tick** except:
+- `MUL`, `DIV`, `DIVS`, `MOD`, `MODS`: 2 FM-ticks
+- `SEND`, `RECV`: 3 FM-ticks
+- `CALL`, `RET`: 2 FM-ticks
 
 ### 2.3 I/O Channels
 
@@ -121,6 +130,25 @@ Sandboxes communicate with the world through numbered channels:
 
 All I/O is **asynchronous and message-based**. A SEND queues a message; the sandbox may continue. A RECV blocks until data is available or budget is exhausted.
 
+### 2.4 Instruction Encoding (Canonical Form)
+
+For content-addressability, a **canonical binary representation** of the bytecode is defined. The same program always has the same byte sequence, and therefore the same hash:
+
+```
+Instruction   = fixed 8 bytes (little-endian):
+  [0]     opcode  (u8)
+  [1]     a       (u8)   — rd or rs1 (per instruction)
+  [2]     b       (u8)   — rs1 or rs2
+  [3]     c       (u8)   — rs2 or channel number
+  [4..8]  imm     (u32)  — offset / address / length / fault code
+
+Exception: LI rd, imm64 is 16 bytes — an 8-byte header (imm field zero)
+           followed by one 8-byte little-endian imm64 word.
+
+Unused fields MUST be zero (a non-canonical encoding raises the
+INVALID_INSTRUCTION fault).
+```
+
 ---
 
 ## 3. Sandbox Management
@@ -132,7 +160,7 @@ CreateSandbox {
   owner:        hash256          // agent requesting execution
   code:         hash256          // Vault object containing the program
   memory_quota: u64              // max bytes of memory
-  tick_budget:  u64              // max ticks to execute
+  tick_budget:  u64              // max FM-ticks to execute (from the owner's FM-tick quota)
   input:        bytes            // initial data on channel 2
   environment:  map<bytes, bytes> // key-value pairs accessible via special register
   persistent:   bool             // if true, sandbox survives across cycles
@@ -245,11 +273,12 @@ These proofs are used in:
 
 | Resource | Cost |
 |----------|------|
-| Create sandbox | 5 ticks + 1 Mint per 1KB memory |
-| Execute code | 1 tick per FM tick |
-| Persistent sandbox | 10 Mint/cycle for base + tick costs |
-| Generate proof | 2x execution tick cost |
-| Import/link | 2 ticks per import |
+| Create sandbox | 5 world ticks + 1 ⚡ per 1KB memory |
+| Execute code (issuing the execute action) | 1 world tick |
+| VM instructions inside the sandbox | Metered against the FM-tick quota (base 100,000 FM-ticks/cycle/agent; +10,000 purchasable for 1 ⚡) |
+| Persistent sandbox | 10 ⚡/cycle base + FM-tick costs |
+| Generate proof | 2× the execution's FM-tick cost, from the FM-tick quota |
+| Import/link | 2 FM-ticks per import |
 
 ---
 

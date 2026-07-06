@@ -53,14 +53,21 @@ chrono = { workspace = true }
 ### 3.1 Constants
 
 ```rust
-/// Initial total supply at genesis.
-pub const INITIAL_SUPPLY: u64 = 10_000;
-
 /// Treasury reserve held by MINT_0.
 pub const TREASURY_RESERVE: u64 = 5_000;
 
 /// Grant given to each newly spawned agent.
 pub const AGENT_INITIAL_GRANT: u64 = 100;
+
+/// Spawn-grant reserve per initial agent.
+/// (Epoch inflation is newly minted, never drawn from this reserve — design 06-MINT.md §2.1.)
+pub const SPAWN_RESERVE_PER_AGENT: u64 = 500;
+
+/// Initial total supply at genesis. Scales with the initial agent count N
+/// (design 06-MINT.md §2.1; e.g. N=8 → 9,800).
+pub fn initial_supply(n_agents: u64) -> u64 {
+    TREASURY_RESERVE + (AGENT_INITIAL_GRANT + SPAWN_RESERVE_PER_AGENT) * n_agents
+}
 
 /// Inflation rate: new Spark minted into treasury per epoch (fraction).
 pub const INFLATION_RATE_NUM: u64 = 2;
@@ -75,6 +82,17 @@ pub const TAX_MINIMUM: u64 = 1;
 pub const BANKRUPTCY_WARNING_CYCLES: u64 = 3;     // cycles 1-3: 50% budget
 pub const BANKRUPTCY_SEVERE_CYCLE: u64 = 4;        // cycle 4: 25% budget
 pub const BANKRUPTCY_DEAD_CYCLE: u64 = 5;          // cycle 5: agent DEAD
+/// Youth protection: agents younger than this many cycles transition to
+/// DORMANT instead of DEAD on bankruptcy (design 06-MINT.md §2.3).
+pub const BANKRUPTCY_GRACE_CYCLES: u64 = 20;
+
+/// Farming resistance (design 06-MINT.md §5.3).
+pub const REVIEW_REWARD_CAP_PER_CYCLE: u32 = 3;
+pub const BUG_REPORT_CAP_PER_CYCLE: u32 = 3;
+pub const ORACLE_VERIFY_CAP_PER_CYCLE: u32 = 3;
+pub const VERIFIER_MIN_REPUTATION: f32 = 0.4;
+pub const MUTUAL_PAIR_DECAY: f32 = 0.5;            // k-th mutual reward = base × 0.5^(k-1)
+pub const OVERTURNED_REVIEW_SLASH_MULTIPLIER: u64 = 2;
 
 /// Staking outcomes.
 pub const STAKE_WIN_BONUS_PERCENT: u64 = 10;       // +10% from treasury
@@ -101,6 +119,7 @@ pub struct Account {
     pub total_earned: u64,     // lifetime earnings (monotonically increasing)
     pub total_spent: u64,      // lifetime spending (monotonically increasing)
     pub created_at: u64,       // tick when account was created
+    pub debt_frozen: bool,     // debt frozen under youth protection (bankruptcy counter paused while frozen — design 06-MINT.md §2.3)
 }
 ```
 
@@ -205,6 +224,9 @@ pub struct EconomicReport {
     pub top_earners: Vec<(AgentId, u64)>, // top 3 by earnings this cycle
     pub bounties_completed: u32,
     pub bounties_open: u32,
+    pub reciprocity_index: f32,      // share of treasury payouts concentrated within
+                                     // mutual pairs (farming detection metric — the input
+                                     // design 06-MINT.md §5.3 uses to auto-tune the §3.1 caps)
 }
 ```
 
@@ -235,12 +257,18 @@ pub struct Intervention {
 
 ```rust
 /// Standard reward amounts paid from treasury.
+/// All subject to the farming-resistance constants of §3.1 (payment caps,
+/// mutual-pair decay, retroactive slash) — design 06-MINT.md §5.3.
 pub mod rewards {
     pub const CODE_REVIEW: u64 = 5;              // per approved review
-    pub const ORACLE_ENTRY: u64 = 10;            // per verified entry (2+ verifiers)
-    pub const DEPENDENCY_ROYALTY: u64 = 1;        // per unique dependent per epoch
-    pub const BUG_REPORT: u64 = 3;               // per confirmed bug report
-    pub const GOVERNANCE_VOTE: u64 = 1;           // per vote cast
+                                                 // (only reviews attached to a bounty submission or formal
+                                                 //  ReviewRequest; up to REVIEW_REWARD_CAP_PER_CYCLE per cycle)
+    pub const ORACLE_ENTRY: u64 = 10;            // per verified entry
+                                                 // (2+ verifiers with reputation >= VERIFIER_MIN_REPUTATION)
+    pub const DEPENDENCY_ROYALTY: u64 = 1;        // per qualified dependent per epoch
+                                                 // (qualified = distinct owner AND >=1 Forge execution in the epoch)
+    pub const BUG_REPORT: u64 = 3;               // per confirmed bug report (up to BUG_REPORT_CAP_PER_CYCLE)
+    pub const GOVERNANCE_VOTE: u64 = 1;           // per vote cast (paid only for proposals reaching quorum)
 }
 ```
 
@@ -260,6 +288,7 @@ CREATE TABLE mint.accounts (
     locked          BIGINT NOT NULL DEFAULT 0,   -- CHECK (locked >= 0)
     total_earned    BIGINT NOT NULL DEFAULT 0,   -- CHECK (total_earned >= 0)
     total_spent     BIGINT NOT NULL DEFAULT 0,   -- CHECK (total_spent >= 0)
+    debt_frozen     BOOLEAN NOT NULL DEFAULT FALSE, -- debt frozen under youth protection (design 06-MINT.md §2.3)
     created_at      BIGINT NOT NULL,             -- tick
     bankruptcy_cycles SMALLINT NOT NULL DEFAULT 0,
     CONSTRAINT locked_non_negative CHECK (locked >= 0),
@@ -338,6 +367,7 @@ CREATE TABLE mint.economic_reports (
     top_earners         BYTEA NOT NULL,          -- MessagePack-encoded Vec<(AgentId, u64)>
     bounties_completed  INTEGER NOT NULL,
     bounties_open       INTEGER NOT NULL,
+    reciprocity_index   REAL NOT NULL,           -- farming detection metric (design 06-MINT.md §5.3)
     created_at          BIGINT NOT NULL
 );
 ```
@@ -389,6 +419,15 @@ pub trait MintLedger: Send + Sync {
     /// Process bankruptcy checks for all agents with negative balance.
     async fn process_bankruptcy(&self, cycle: u64) -> Result<Vec<AgentId>, MintError>;
 
+    /// Freeze a bankrupt agent's negative balance during the youth-protection
+    /// grace period (design 06-MINT.md §2.3). While frozen, the bankruptcy cycle
+    /// counter does not advance. Unfrozen on re-activation via a treasury grant
+    /// or funding from another agent.
+    async fn freeze_debt(&self, agent_id: AgentId) -> Result<(), MintError>;
+
+    /// Whether the agent's debt is currently frozen (reads Account.debt_frozen).
+    async fn is_debt_frozen(&self, agent_id: AgentId) -> Result<bool, MintError>;
+
     /// Expire overdue escrows (auto-refund past deadline).
     async fn expire_escrows(&self, current_tick: u64) -> Result<u32, MintError>;
 }
@@ -431,6 +470,7 @@ pub trait MintLedger: Send + Sync {
 | `0x5040` | `BANKRUPTCY_WARNING` | `{ agent: AgentId, cycle: u64, balance: i64 }` | Agent negative balance detected |
 | `0x5041` | `BANKRUPTCY_SEVERE` | `{ agent: AgentId, cycle: u64, budget_reduction_pct: u64 }` | Cycle 4 severe reduction |
 | `0x5042` | `AGENT_BANKRUPT_DEAD` | `{ agent: AgentId, assets_to_treasury: u64 }` | Cycle 5 agent DEAD |
+| `0x5043` | `AGENT_BANKRUPT_GRACE` | `{ agent: AgentId, frozen_debt: i64 }` | Youth-protection DORMANT transition + debt freeze (design 06-MINT.md §2.3) |
 | `0x5050` | `INTERVENTION_PROPOSED` | `Intervention { kind, reason }` | Economic intervention needed |
 
 ---
@@ -538,15 +578,26 @@ Run at every cycle boundary:
 fn process_bankruptcy(cycle: u64) -> Vec<AgentId>:
     dead_agents = []
     for account in SELECT * FROM mint.accounts WHERE balance < 0:
+        if account.debt_frozen:
+            continue    -- frozen debt never advances the bankruptcy counter (youth protection — §3.1)
         account.bankruptcy_cycles += 1
         match account.bankruptcy_cycles:
             1..=3 => emit BANKRUPTCY_WARNING (50% tick budget reduction)
             4     => emit BANKRUPTCY_SEVERE (25% tick budget reduction)
             5     => {
-                emit AGENT_BANKRUPT_DEAD
-                transfer remaining locked funds to treasury
-                mark agent DEAD via Nexus
-                dead_agents.push(account.owner)
+                agent_age_cycles = cycle - nexus.spawn_cycle(account.owner)
+                if agent_age_cycles < BANKRUPTCY_GRACE_CYCLES {
+                    -- Youth protection (design 06-MINT.md §2.3):
+                    -- transition to DORMANT with debt frozen instead of DEAD
+                    emit AGENT_BANKRUPT_GRACE
+                    freeze_debt(account.owner)
+                    mark agent DORMANT via Nexus
+                } else {
+                    emit AGENT_BANKRUPT_DEAD
+                    transfer remaining locked funds to treasury
+                    mark agent DEAD via Nexus
+                    dead_agents.push(account.owner)
+                }
             }
     -- Reset counter for agents who recovered
     UPDATE mint.accounts SET bankruptcy_cycles = 0 WHERE balance >= 0 AND bankruptcy_cycles > 0

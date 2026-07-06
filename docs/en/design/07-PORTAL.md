@@ -126,7 +126,11 @@ CachePolicy {
 }
 ```
 
-Shared cache hits are free (0 ⚡, 0 ticks for the requesting agent).
+Shared cache hits are free of currency cost (0 ⚡, 1 tick for the requesting agent — see the cost table in §7).
+
+### 3.4 Recording for Deterministic Replay
+
+**Every external fetch response** is recorded as a `WEB_RESPONSE` external input in NEXUS's sealed input store ([01-NEXUS.md](./01-NEXUS.md) §4.5). A cache hit is a reuse of an already-recorded response — it produces no new external input (and is therefore not re-recorded). During replay, Portal never touches the external web; it returns the recorded responses. The web is a non-deterministic external world — this recording is what makes deterministic replay possible.
 
 ---
 

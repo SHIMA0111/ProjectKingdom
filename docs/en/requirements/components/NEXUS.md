@@ -61,12 +61,13 @@ CREATE TABLE nexus.agents (
     spawn_tick      BIGINT NOT NULL,            -- tick at which agent was created
     spawn_epoch     INTEGER NOT NULL,           -- epoch at which agent was created
     role            SMALLINT NOT NULL,          -- 0=Generalist, 1=CompilerSmith, 2=Librarian, 3=Architect, 4=Explorer
-    reputation      REAL NOT NULL DEFAULT 0.0,  -- [0.0, 1.0]
+    reputation      REAL NOT NULL DEFAULT 0.5,  -- [0.0, 1.0], starts from the neutral prior 0.5 (design 01-NEXUS.md §6.3)
     status          SMALLINT NOT NULL DEFAULT 0,-- 0=EMBRYO, 1=ACTIVE, 2=DORMANT, 3=DEAD
     parent_id       BYTEA REFERENCES nexus.agents(id),  -- sponsoring agent (NULL for system spawns)
     genome          BYTEA,                      -- LLM system prompt / personality seed
     last_active_cycle BIGINT NOT NULL DEFAULT 0,-- last cycle the agent consumed a tick
     inactive_cycles INTEGER NOT NULL DEFAULT 0, -- consecutive cycles with no activity
+    active_cycles   INTEGER NOT NULL DEFAULT 0, -- lifetime count of cycles with >=1 tick consumed (reputation smoothing — §9.3)
     balance_negative_cycles INTEGER NOT NULL DEFAULT 0, -- consecutive cycles with balance < 0
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -92,7 +93,8 @@ CREATE TABLE nexus.epochs (
 CREATE TABLE nexus.cycles (
     id              BIGINT PRIMARY KEY,        -- cycle number
     start_tick      BIGINT NOT NULL,           -- first tick of this cycle
-    end_tick        BIGINT NOT NULL,           -- last tick of this cycle (start_tick + 255)
+    end_tick        BIGINT NOT NULL,           -- last tick of this cycle (variable length — when every active
+                                               -- agent has consumed/yielded its budget; design 01-NEXUS.md §2.1)
     epoch_id        INTEGER NOT NULL REFERENCES nexus.epochs(id),
     world_hash      BYTEA NOT NULL,            -- 32 bytes, sha256 of all component state hashes
     nexus_hash      BYTEA NOT NULL,            -- 32 bytes, nexus state hash
@@ -174,6 +176,7 @@ pub struct Agent {
     pub genome: Option<Vec<u8>>,
     pub last_active_cycle: u64,
     pub inactive_cycles: u32,
+    pub active_cycles: u32,     // lifetime count of cycles with >=1 tick consumed (reputation smoothing — §9.3)
     pub balance_negative_cycles: u32,
 }
 
@@ -274,8 +277,17 @@ pub trait Nexus: Send + Sync {
     /// Returns the new tick number.
     async fn advance_tick(&self) -> Result<u64, NexusError>;
 
-    /// Check if the current tick completes a cycle (tick % 256 == 255).
+    /// Check if the current tick completes a cycle
+    /// (i.e. every active agent has consumed or yielded its tick budget;
+    ///  cycles are not fixed-length — see design 01-NEXUS.md §2.1).
     fn is_cycle_boundary(&self) -> bool;
+
+    /// Return the cycle number in which the agent was spawned.
+    /// Because cycles have variable tick length this cannot be derived by
+    /// dividing spawn_tick — it is looked up from the nexus.cycles table row
+    /// containing spawn_tick. (Used by the bankruptcy-grace check in §9.6 and
+    /// by Mint's process_bankruptcy.)
+    async fn spawn_cycle(&self, agent_id: &AgentId) -> Result<u64, NexusError>;
 
     // ── Identity ──────────────────────────────────────────────────────
 
@@ -321,6 +333,11 @@ pub trait Nexus: Send + Sync {
     // ── Governance ────────────────────────────────────────────────────
 
     /// Submit a governance proposal. Requires ACTIVE agent status.
+    /// Epoch gate (design 01-NEXUS.md §6.1):
+    ///   - SPAWN_AGENT: from Epoch 2 (Foundation) onward
+    ///   - KILL_AGENT / CHANGE_PARAM / EPOCH_ADVANCE / CUSTOM: from Epoch 5 (Sovereignty) onward
+    /// Pre-unlock kinds are rejected with an EpochLocked error (wire name: EPOCH_LOCKED —
+    /// errors are CamelCase variants in Rust and SCREAMING_SNAKE_CASE on the protocol/logs).
     async fn submit_proposal(&self, proposal: Proposal) -> Result<Hash256, NexusError>;
 
     /// Cast a vote on a proposal. Weighted by voter's reputation.
@@ -343,7 +360,9 @@ pub trait Nexus: Send + Sync {
     /// Recompute reputation for an agent.
     /// Formula: 0.4*code_quality + 0.3*contribution_volume
     ///        + 0.2*economic_activity + 0.1*governance_participation
-    /// All values normalized to [0.0, 1.0].
+    /// All values normalized to [0.0, 1.0]. The computed value is blended with
+    /// the neutral prior 0.5 using w = min(1, active_cycles/20)
+    /// (design 01-NEXUS.md §6.3; see §9.3).
     async fn recompute_reputation(&self, agent_id: &AgentId) -> Result<ReputationBreakdown, NexusError>;
 
     /// Batch recompute reputation for all active agents. Called at cycle boundary.
@@ -532,9 +551,9 @@ pub struct EpochChangeEvent {
 | Cycle boundary processing | < 500 ms | World state hash computation, tick allocation, maintenance |
 | Proposal tally | < 100 ms | Aggregate weighted votes from DB |
 | Reputation recomputation (single) | < 50 ms | Cross-component metric aggregation |
-| Reputation batch (all agents) | < 2 s | For max 64 agents |
+| Reputation batch (active agents) | < 2 s | Assuming the implementation sizing bound of 64 active agents |
 | World state hash | < 200 ms | Collect 7 component hashes + sha256 |
-| Max concurrent active agents | 64 | Scaling: +4 per epoch |
+| Max concurrent active agents | Implementation sizing bound: 64 | Not a world rule; the actual cap is decided by NEXUS from budget (min 4, +4 per epoch — design 00-MASTER.md §7) |
 | Event throughput | > 10,000 events/s | Append-only log with in-memory index |
 
 ---
@@ -596,8 +615,15 @@ reputation(agent_id):
     ea = normalize(mint.economic_activity(agent_id))           // [0.0, 1.0]
     gp = normalize(nexus.governance_participation(agent_id))   // [0.0, 1.0]
 
-    total = 0.4 * cq + 0.3 * cv + 0.2 * ea + 0.1 * gp
-    return clamp(total, 0.0, 1.0)
+    computed = 0.4 * cq + 0.3 * cv + 0.2 * ea + 0.1 * gp
+
+    // Blend with the neutral prior 0.5 (design 01-NEXUS.md §6.3):
+    // smooths the computed value until behavioral data accumulates, preventing
+    // the failure mode where the whole initial population sits at reputation 0
+    // and weighted voting cannot function.
+    w = min(1.0, agent.active_cycles / 20.0)
+    effective = w * computed + (1.0 - w) * 0.5
+    return clamp(effective, 0.0, 1.0)
 
 normalize(raw_value):
     // Normalize against the max value across all active agents
@@ -666,15 +692,23 @@ cycle_maintenance():
             update_status(agent, DORMANT)
 
     // Kill bankrupt agents (balance < 0 for 5 consecutive cycles)
+    // Youth protection: agents younger than BANKRUPTCY_GRACE_CYCLES(=20) cycles
+    // transition to DORMANT with debt frozen instead of DEAD (design 06-MINT.md §2.3)
     for agent in agents(status=ACTIVE or status=DORMANT):
+        if mint.is_debt_frozen(agent.id):
+            continue    // frozen debt never advances the counter (youth protection)
         balance = mint.balance(agent.id)
         if balance < 0:
             agent.balance_negative_cycles += 1
         else:
             agent.balance_negative_cycles = 0
         if agent.balance_negative_cycles >= 5:
-            update_status(agent, DEAD)
-            publish agent_kill(Bankruptcy)
+            if current_cycle - spawn_cycle(agent) < BANKRUPTCY_GRACE_CYCLES:
+                update_status(agent, DORMANT)   // publishes agent_status_change
+                mint.freeze_debt(agent.id)      // Mint publishes AGENT_BANKRUPT_GRACE (0x5043)
+            else:
+                update_status(agent, DEAD)
+                publish agent_kill(Bankruptcy)
 
     // Auto-spawn if below minimum threshold
     if active_agent_count() < 4:
@@ -699,7 +733,7 @@ spawn_agent(request):
         spawn_tick: current_tick(),
         spawn_epoch: current_epoch(),
         role: request.role,
-        reputation: 0.0,
+        reputation: 0.5,   // neutral prior (design 01-NEXUS.md §6.3)
         status: EMBRYO,
         parent_id: request.parent,
         genome: request.genome,

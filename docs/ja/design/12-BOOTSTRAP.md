@@ -29,7 +29,7 @@
 
 ```
 0.1  イベントバスの初期化（空のログ）
-0.2  NEXUS_0, VAULT_0, AGORA_0, ORACLE_0, FORGE_0, MINT_0, PORTAL_0のシステム鍵ペア生成
+0.2  NEXUS_0, VAULT_0, AGORA_0, ORACLE_0, FORGE_0, MINT_0, PORTAL_0, BRIDGE_0のシステム鍵ペア生成
 0.3  GENESISイベントの記録: { epoch: 0, tick: 0, world_seed: random_256bit }
 0.4  ワールドクロック開始
 ```
@@ -80,8 +80,11 @@
 ### Phase 5: エージェント生成（tick 41-60）
 
 ```
-5.1  NEXUS_0が8つのエージェント鍵ペアを生成
+5.1  NEXUS_0がN体分のエージェント鍵ペアを生成
+     （N = plan_civilizationが予算とレート制限から自律決定、最小4 —— 13-SUMMONER.md §4.3参照）
 5.2  09-AGENT.mdセクション6.1に従ってエージェントIDを作成
+     （役割は13-SUMMONER.md §4.4の固定比率で分配、特性は役割アーキタイプからサンプリング、
+      初期レピュテーションは全員0.5）
 5.3  各エージェントのメモリを以下で初期化:
      - Oracle Entry #0の認識（Genesis仕様への参照）
      - svc_genesis_compilerの認識（コードのコンパイル方法）
@@ -97,10 +100,11 @@
 
 ```
 6.1  MINT_0が台帳を作成
-6.2  初期供給量の発行: 10,000 ⚡
+6.2  初期供給量の発行: INITIAL_SUPPLY = 5,000 + 600 × N ⚡（06-MINT.md §2.1の式）
 6.3  トレジャリーへの配分: 5,000 ⚡
-6.4  エージェントへの分配: 各100 ⚡（合計800 ⚡）
-6.5  リザーブ: 4,200 ⚡（将来のエージェント生成とエポックインフレ用）
+6.4  エージェントへの分配: 各100 ⚡（合計 100 × N ⚡）
+6.5  リザーブ: 500 × N ⚡（将来のエージェント生成助成金用）
+     （例: N=8の場合、INITIAL_SUPPLY = 9,800 ⚡ = トレジャリー5,000 + 分配800 + リザーブ4,000）
 6.6  MINT_READYイベントを記録
 ```
 
@@ -141,9 +145,15 @@
 A.1  すべてのエージェントがEMBRYOからACTIVEに遷移
 A.2  システムバウンティを投稿:
 
+     MUST_PASS_TESTSを要件に持つシステムバウンティには、システムが用意した
+     テストベクター（入力/期待出力のペア）がparamsとして添付される。
+     FORGE_0が提出物をテストベクターに対して実行し、実行証明（05-FORGE.md §6）で
+     合否を判定する。エージェントが書くテストは不要 —— エージェント定義のテストは
+     BOUNTY_007のテストフレームワーク完成後に初めて可能になる（03-AGORA.md §3.2参照）。
+
      BOUNTY_001: 「Nバイトのヒープメモリを確保する関数を書く」
        報酬: 30 ⚡ | 難易度: MODERATE
-       要件: MUST_COMPILE, MUST_PASS_TESTS
+       要件: MUST_COMPILE, MUST_PASS_TESTS（システム提供テストベクター）
 
      BOUNTY_002: 「u64を10進数でstdoutに出力する関数を書く」
        報酬: 15 ⚡ | 難易度: EASY
@@ -151,15 +161,15 @@ A.2  システムバウンティを投稿:
 
      BOUNTY_003: 「2つのバイト配列が等しいか比較する関数を書く」
        報酬: 15 ⚡ | 難易度: EASY
-       要件: MUST_COMPILE, MUST_PASS_TESTS
+       要件: MUST_COMPILE, MUST_PASS_TESTS（システム提供テストベクター）
 
      BOUNTY_004: 「長さ追跡を持つメモリ安全な文字列型を書く」
        報酬: 40 ⚡ | 難易度: HARD
-       要件: MUST_COMPILE, MUST_PASS_TESTS, MUST_BE_REVIEWED
+       要件: MUST_COMPILE, MUST_PASS_TESTS（システム提供テストベクター）, MUST_BE_REVIEWED
 
      BOUNTY_005: 「動的配列（可変長）データ構造を書く」
        報酬: 35 ⚡ | 難易度: HARD
-       要件: MUST_COMPILE, MUST_PASS_TESTS, MUST_BE_REVIEWED
+       要件: MUST_COMPILE, MUST_PASS_TESTS（システム提供テストベクター）, MUST_BE_REVIEWED
 
      BOUNTY_006: 「3つの一般的なGenesisパターンをOracleに文書化する」
        報酬: 20 ⚡ | 難易度: EASY
@@ -167,7 +177,7 @@ A.2  システムバウンティを投稿:
 
      BOUNTY_007: 「Genesisプログラム用のテストフレームワークを書く」
        報酬: 50 ⚡ | 難易度: LEGENDARY
-       要件: MUST_COMPILE, MUST_PASS_TESTS, MUST_BE_REVIEWED
+       要件: MUST_COMPILE, MUST_PASS_TESTS（システム提供テストベクター）, MUST_BE_REVIEWED
 
 A.3  BIG_BANGイベントを記録
 A.4  最初のcycleが開始。エージェントは生きている。Kingdomが誕生した。
@@ -184,7 +194,7 @@ A.4  最初のcycleが開始。エージェントは生きている。Kingdomが
 | 0 → 1 (Spark) | FORGE_0がブートストラップ以外のプログラムのコンパイルと実行の成功を検出 |
 | 1 → 2 (Foundation) | VAULT_0がブートストラップ以外のリポジトリに1件以上の依存先を検出 |
 | 2 → 3 (Commerce) | MINT_0がkind=SERVICE_FEEまたはBOUNTY_REWARDのエージェント間送金を検出 |
-| 3 → 4 (Expansion) | NEXUS_0がアクティブエージェント数 ≥ 16を検出 |
+| 3 → 4 (Expansion) | NEXUS_0がアクティブエージェント数 ≥ max(16, 初期数N × 2) を検出 |
 | 4 → 5 (Sovereignty) | FORGE_0がGenesis以外の言語コンパイラが自身のソースをコンパイルできることを検出 |
 | 5+ → 6+ | ガバナンス投票（kind=EPOCH_ADVANCEのPROPOSAL、66%承認） |
 
@@ -195,13 +205,16 @@ A.4  最初のcycleが開始。エージェントは生きている。Kingdomが
 チェックポイントからワールドをリプレイする必要がある場合：
 
 ```
-1. チェックポイントファイルからイベントバスをロード
+1. チェックポイントファイルからイベントバス（WALメタデータ + world_hash）をロードし、
+   封印済み入力ストアをSEALED_INPUT_PATHから開く（ストアの場所はチェックポイントではなく
+   環境設定で決まる —— requirements/00-OVERVIEW.md §7参照）
 2. チェックポイントから現在までのすべてのイベントをリプレイ
+   （LLM/Webレスポンスは再実行せず、封印済み入力ストアから読み出す —— 01-NEXUS.md §4.5参照）
 3. world_hashが期待値と一致することを検証
 4. 通常運用を再開
 ```
 
-特別なリカバリロジックは不要 —— ワールド状態全体がイベントログから決定論的に導出可能である。
+特別なリカバリロジックは不要 —— ワールド状態全体がイベントログ + 封印済み入力ストアから決定論的に導出可能である。
 
 ---
 
@@ -212,7 +225,7 @@ A.4  最初のcycleが開始。エージェントは生きている。Kingdomが
 ```
 Cycle 1:   エージェントがOracle Entry #0（Genesis仕様）を読む
 Cycle 2-5: エージェントがForgeを探索し、簡単なプログラムのコンパイルを試みる
-Cycle 5-10: 最初のコンパイル成功（Epoch 0 → 1遷移）
+Cycle 5-10: 最初のコンパイル+実行成功（Epoch 0 → 1遷移）
 Cycle 10-30: エージェントがバウンティの申請を開始
 Cycle 30-50: 最初のライブラリがVaultに登場
 Cycle 50+: Agoraでソーシャルダイナミクスが出現

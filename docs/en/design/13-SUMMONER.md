@@ -106,6 +106,7 @@ ModelInfo {
   model_id:         string
   max_context:      u32          // tokens
   input_cost:       f64          // USD per 1M input tokens
+  cached_input_cost: f64         // USD per 1M cached input tokens (= input_cost if unsupported)
   output_cost:      f64          // USD per 1M output tokens
   capability_tier:  enum(TIER_1 | TIER_2 | TIER_3)  // see below
   supports_structured: bool      // structured output support
@@ -137,10 +138,21 @@ NEXUS computes the optimal agent configuration from the budget:
 ```
 fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLimits]) -> WorldPlan {
 
+  // Step 0: Reserve 10% of the total budget for Bridge translation (§4.1, 15-BRIDGE.md §7)
+  bridge_budget = budget_usd * 0.10
+  agent_budget  = budget_usd * 0.90
+
   // Step 1: Estimate cost per agent per cycle
-  //   - 1 cycle = ~10 think calls (average)
-  //   - 1 think = ~2000 input tokens + ~500 output tokens
-  estimated_cost_per_agent_per_cycle = estimate(models)
+  //   - 1 cycle = ~8 think calls (batch-think model: base 64 ticks ≈ 8 thinks + 56 action ticks
+  //     — see 09-AGENT.md §4.1)
+  //   - 1 think ≈ ~7000 input tokens (of which ~5000 are a stable, prompt-cache-eligible
+  //     prefix, consistent with the context budget in §5.4) + ~800 output tokens
+  //   - Effective input cost assumes prompt caching:
+  //     effective_input = 5000 * cache_discount + 2000    (cache_discount ≈ 0.1)
+  cost_per_think = (5000 * model.cached_input_cost
+                  + 2000 * model.input_cost
+                  + 800  * model.output_cost) / 1_000_000
+  estimated_cost_per_agent_per_cycle = 8 * cost_per_think
 
   // Step 2: Reverse-calculate from sustainable cycle count
   //   - Minimum 100 cycles required (meaningful progress threshold)
@@ -149,15 +161,18 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   ideal_cycles = 1000
 
   // Step 3: Determine agent count
-  max_agents_ideal = floor(budget_usd / (ideal_cycles * estimated_cost_per_agent_per_cycle))
-  max_agents_min   = floor(budget_usd / (min_cycles * estimated_cost_per_agent_per_cycle))
-
-  agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
+  max_agents_ideal = floor(agent_budget / (ideal_cycles * estimated_cost_per_agent_per_cycle))
+  max_agents_min   = floor(agent_budget / (min_cycles * estimated_cost_per_agent_per_cycle))
 
   // Step 4: Downgrade models if budget is insufficient
-  if agent_count < 4 {
-    retry with TIER_2/TIER_3 models only
+  //   (checked BEFORE clamping — after the clamp agent_count is always >= 4,
+  //    so the test keys on max_agents_min: can even min_cycles sustain 4 agents?)
+  if max_agents_min < 4 {
+    retry from Step 1 with TIER_2/TIER_3 models only
+    if still max_agents_min < 4: error (budget too low)
   }
+
+  agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
 
   // Step 5: Distribute roles (fixed ratio)
   roles = distribute_roles(agent_count)
@@ -166,11 +181,26 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   //   - ARCHITECT, COMPILER_SMITH → prefer TIER_1
   //   - LIBRARIAN, GENERALIST → TIER_2
   //   - When budget is tight → all TIER_3
-  model_assignment = assign_models(roles, models, budget_usd)
+  model_assignment = assign_models(roles, models, agent_budget)
 
-  return WorldPlan { agent_count, roles, model_assignment, estimated_cycles }
+  // Step 7: Estimate sustainable cycles for the chosen configuration
+  estimated_cycles = floor(agent_budget / (agent_count * estimated_cost_per_agent_per_cycle))
+
+  return WorldPlan { agent_count, roles, model_assignment, estimated_cycles,
+                     bridge_budget, agent_budget }
 }
 ```
+
+**Worked example** (budget $50 → agent budget $45 (90%), TIER_3 model: $1/M input, $0.1/M cached input, $5/M output):
+
+```text
+cost_per_think ≈ (5000×0.1 + 2000×1.0 + 800×5.0) / 1,000,000 ≈ $0.0065
+cost_per_agent_per_cycle ≈ 8 × $0.0065 ≈ $0.052
+→ 4-agent configuration: $0.208/cycle → ~216 cycles on $45 (satisfies min 100 cycles)
+→ A TIER_1/2-heavy configuration would fall below 100 cycles, so NEXUS picks a TIER_3-centric plan
+```
+
+These estimates are only **priors**. Once running, NEXUS continuously measures the actual burn rate via the CostTracker (§6.1) and replans. Even when estimates are wrong, the world adapts automatically.
 
 ### 4.4 Fixed Role Distribution Ratios
 
@@ -209,7 +239,10 @@ if burn_rate > planned_rate * 1.3 {
   // Options (NEXUS decides autonomously):
   option_a: Reduce agent count (DORMANT the least active agent)
   option_b: Downgrade some agents to TIER_3 models
-  option_c: Reduce think frequency (increase batch tick count)
+  option_c: Reduce think frequency (nudge each think to fill its batch up to
+            THINK_BATCH_MAX (= 8, a fixed constant), stretching the interval
+            between thinks. The cap itself is never changed — it is a public
+            constant the response schema and parser depend on)
 }
 
 // When budget has surplus
@@ -226,7 +259,9 @@ This is performed by NEXUS **without governance vote**. Resource allocation is a
 
 ### 5.1 Agent ↔ LLM Mapping
 
-Each agent's "thought" corresponds to one LLM API call:
+Each agent's "thought" (think) corresponds to one LLM API call and returns a **batch plan of up to THINK_BATCH_MAX (= 8) actions** (see [09-AGENT.md](./09-AGENT.md) §4.1).
+
+On wall-clock time: thinks of different agents run **concurrently**, bounded by provider rate limits. NEXUS schedules thinks to maximize throughput; only world actions are serialized in Lamport order ([01-NEXUS.md](./01-NEXUS.md) §2.3). The wall-clock duration of one cycle is on the order of "thinks per agent × latency," not the sum over all agents.
 
 ```
 Kingdom side:                      LLM side:
@@ -252,23 +287,29 @@ Kingdom side:                      LLM side:
   agent_id, role, traits, reputation, balance
 
 [YOUR MEMORY]
-  working memory + relevant long-term memories
-
-[CURRENT STATE]
-  cycle, tick, epoch, subscribed events since last think
+  working memory + relevant long-term memories (stable within a cycle)
 
 [AVAILABLE ACTIONS]
-  List of executable actions for this tick (structured)
+  Schema of the actions available to this think's batch (structured, fixed)
 
 [RESPONSE FORMAT]
   You must respond in the following JSON format:
   {
-    "action": "...",
-    "params": { ... },
-    "reasoning": "...",        // internal reasoning (used for memory updates)
-    "memory_update": { ... }   // writes to persistent memory
+    "actions": [                 // action batch of up to THINK_BATCH_MAX (= 8) entries
+      { "action": "...", "params": { ... } },
+      ...
+    ],
+    "reasoning": "...",          // internal reasoning (used for memory updates, never shown to other agents)
+    "memory_update": { ... }     // writes to persistent memory
   }
+
+─── end of stable prefix (unchanged across thinks, prompt-cache-eligible) ───
+
+[CURRENT STATE]  ← variable part (changes every think)
+  cycle, tick, epoch, subscribed events since last think, recent action history
 ```
+
+The section ordering is deliberately **stable-first**: [WORLD RULES], [YOUR IDENTITY], [YOUR MEMORY], [AVAILABLE ACTIONS], and [RESPONSE FORMAT] form a prefix that is stable across thinks (~5000 tokens) and hits the provider's prompt cache; the variable [CURRENT STATE] comes last. This is the assumption behind the cost estimates in §4.3 and §5.4.
 
 ### 5.3 Think Tier Routing
 
@@ -301,14 +342,19 @@ This minimizes cost while allocating high-performance models to critical decisio
 ```
 ContextBudget {
   total_tokens:     model.max_context
-  system_prompt:    ~2000 tokens (fixed)
-  identity:         ~500 tokens (fixed)
-  memory:           ~2000 tokens (compressed/summarized)
+  // ── stable prefix (prompt-cache-eligible, ~5000 tokens total) ──
+  system_prompt:    ~2000 tokens (fixed — WORLD RULES)
+  identity:         ~500 tokens (semi-fixed — YOUR IDENTITY)
+  memory:           ~2000 tokens (compressed/summarized — stable within a cycle)
+  action_schema:    ~500 tokens (fixed — AVAILABLE ACTIONS + RESPONSE FORMAT)
+  // ── variable part (changes every think, ~2000 tokens total) ──
   world_state:      ~1500 tokens (relevant info only)
-  action_history:   ~1000 tokens (recent only)
-  available_space:   remainder (for response)
+  action_history:   ~500 tokens (recent only)
+  available_space:   remainder (for response; output assumed ~800 tokens)
 }
 ```
+
+Total input is roughly 7000 tokens. The cost estimate in §4.3 (5000 cacheable + 2000 variable + 800 output) is derived from this structure.
 
 ### 5.5 Response Parse Failure Handling
 

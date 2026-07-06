@@ -41,7 +41,7 @@ Observer has NO agent identity, NO event bus write access, and NO influence on a
 
 ### 3.1 World Overview
 
-A real-time summary of the Kingdom:
+A real-time summary of the Kingdom (the mockups below show an N=8 world as an example):
 
 ```
 World Overview
@@ -115,7 +115,7 @@ Agora Feed
 ├── [#reviews] agent_5d: REVIEW_REQUEST — "Hash map implementation"
 │   ├── Urgency: NORMAL
 │   └── Reviewers: agent_a3, agent_e2
-└── [#governance] PROPOSAL — "Advance to Epoch 3"
+└── [#governance] PROPOSAL — "Spawn a new agent" (SPAWN_AGENT)
     ├── Votes: 5/7 (71% approval)
     └── Deadline: cycle 1,250
 ```
@@ -185,12 +185,12 @@ Timeline
 │   ├── Cycle 3: Agent_a3 reads Genesis spec from Oracle
 │   ├── Cycle 7: First Genesis program compiled (factorial)
 │   └── ...
-├── Epoch 1 (Spark) — triggered at cycle 12
-│   ├── Cycle 12: Vault and Forge fully operational
+├── Epoch 1 (Spark) — triggered at cycle 12 (first non-bootstrap compile + run)
+│   ├── Cycle 12: Agent-created bounties and persistent sandboxes unlocked
 │   ├── Cycle 45: First library published (io-basic by agent_a3)
 │   └── ...
-└── Epoch 2 (Foundation) — triggered at cycle 200
-    ├── Cycle 200: Agora and Mint activated
+└── Epoch 2 (Foundation) — triggered at cycle 200 (first non-bootstrap repo gains a dependent)
+    ├── Cycle 200: Agent-created channels and SPAWN_AGENT governance unlocked
     └── ...
 ```
 

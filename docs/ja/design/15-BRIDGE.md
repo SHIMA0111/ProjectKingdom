@@ -157,12 +157,14 @@ BRIDGE出力:
 
 ```
 内部:
-  Proposal { kind: EPOCH_ADVANCE, description: b"\x82\xa4from\x01\xa2to\x02\xa6reason\xa8deps>3" }
+  Proposal { kind: SPAWN_AGENT, description: b"\x82\xa4role\xa9LIBRARIAN\xa6reason\xabdocs-backlog" }
 
 BRIDGE出力:
-  "Proposal: Advance from Epoch 1 (Spark) to Epoch 2 (Foundation).
-   Reason: More than 3 library dependencies now exist in the ecosystem."
+  "Proposal: Spawn a new LIBRARIAN agent.
+   Reason: A documentation backlog has accumulated in Oracle."
 ```
+
+（EPOCH_ADVANCE提案はEpoch 5以降にのみ現れる —— [01-NEXUS.md](./01-NEXUS.md) §6.1のエポックゲーティング参照。それ以前のエポック遷移は自動トリガーであり、提案としては流れない。）
 
 ---
 

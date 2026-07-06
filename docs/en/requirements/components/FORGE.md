@@ -92,6 +92,9 @@ pub struct ForgeMachine {
     // --- Memory ---
     pub memory: Vec<u8>,
     pub heap_start: u64,
+    pub heap_end: u64,     // heap/stack boundary (fixed at sandbox creation).
+                           // The stack grows downward from stack_start and must stay
+                           // within [heap_end..stack_start] (§9.2)
     pub stack_start: u64,
 
     // --- Metering ---
@@ -146,13 +149,15 @@ pub struct IoChannel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Opcode {
-    // Arithmetic (1 tick unless noted)
+    // Arithmetic (1 tick unless noted; ADD/SUB/MUL wrap in two's complement, sign-agnostic)
     ADD  = 0x01, // rd = rs1 + rs2
     SUB  = 0x02, // rd = rs1 - rs2
     MUL  = 0x03, // rd = rs1 * rs2          (2 ticks)
-    DIV  = 0x04, // rd = rs1 / rs2          (2 ticks, faults on /0)
-    MOD  = 0x05, // rd = rs1 % rs2          (2 ticks, faults on %0)
+    DIV  = 0x04, // rd = rs1 / rs2  unsigned (2 ticks, faults on /0)
+    MOD  = 0x05, // rd = rs1 % rs2  unsigned (2 ticks, faults on %0)
     NEG  = 0x06, // rd = -rs1
+    DIVS = 0x07, // rd = rs1 / rs2  signed, truncates toward zero (2 ticks, faults on /0)
+    MODS = 0x08, // rd = rs1 % rs2  signed, sign follows dividend (2 ticks, faults on %0)
 
     // Bitwise (1 tick)
     AND  = 0x10,
@@ -160,7 +165,8 @@ pub enum Opcode {
     XOR  = 0x12,
     NOT  = 0x13,
     SHL  = 0x14,
-    SHR  = 0x15,
+    SHR  = 0x15, // logical shift right
+    SAR  = 0x16, // arithmetic shift right (replicates the sign bit)
 
     // Memory (1 tick)
     LOAD   = 0x20, // rd = memory[rs1 + offset]           (byte load)
@@ -174,7 +180,8 @@ pub enum Opcode {
     JMP  = 0x30, // unconditional jump                    (1 tick)
     JZ   = 0x31, // jump if rs1 == 0                      (1 tick)
     JNZ  = 0x32, // jump if rs1 != 0                      (1 tick)
-    JLT  = 0x33, // jump if rs1 < rs2                     (1 tick)
+    JLT  = 0x33, // jump if rs1 < rs2 (unsigned compare)  (1 tick)
+    JLTS = 0x36, // jump if rs1 < rs2 (signed compare)    (1 tick)
     CALL = 0x34, // push PC, jump to addr                 (2 ticks)
     RET  = 0x35, // pop PC, return                        (2 ticks)
 
@@ -214,7 +221,7 @@ impl Opcode {
     /// Return the tick cost for this opcode.
     pub fn tick_cost(&self) -> u64 {
         match self {
-            Opcode::MUL | Opcode::DIV | Opcode::MOD => 2,
+            Opcode::MUL | Opcode::DIV | Opcode::DIVS | Opcode::MOD | Opcode::MODS => 2,
             Opcode::SEND | Opcode::RECV => 3,
             Opcode::CALL | Opcode::RET => 2,
             _ => 1,
@@ -262,6 +269,8 @@ pub struct ForgeProgram {
     pub metadata: Vec<u8>,         // compiler info, optimization level, etc.
 }
 ```
+
+**Canonical binary encoding** (for content-addressability, design 05-FORGE.md §2.4): every instruction is a fixed 8-byte little-endian `[opcode:u8][a:u8][b:u8][c:u8][imm:u32]`. Exception: `LI` is 16 bytes (8-byte header + one imm64 word). Unused fields MUST be zero; a non-canonical encoding raises the `InvalidInstruction` fault. The same program always has the same byte sequence and therefore the same hash.
 
 ### 3.9 Import / Linking
 
@@ -492,10 +501,14 @@ fn run(machine: &mut ForgeMachine) -> ExecResult:
         match instr.opcode:
             ADD => machine.registers[rd] = rs1_val.wrapping_add(rs2_val); update_flags()
             DIV => if rs2_val == 0 { fault(DivideByZero) } else { rd = rs1 / rs2 }
+            DIVS => if rs2_val == 0 { fault(DivideByZero) } else { rd = (rs1 as i64).wrapping_div(rs2 as i64) as u64 }
+            MODS => if rs2_val == 0 { fault(DivideByZero) } else { rd = (rs1 as i64).wrapping_rem(rs2 as i64) as u64 }
+            SAR  => rd = ((rs1_val as i64) >> (rs2_val % 64)) as u64
+            JLTS => if (rs1_val as i64) < (rs2_val as i64) { pc = addr; continue }
             LOAD => bounds_check(addr); rd = memory[addr]
             PUSH => if sp < heap_end { fault(StackOverflow) }; sp -= 8; write(sp, rs1)
             POP  => if sp >= stack_start { fault(StackUnderflow) }; rd = read(sp); sp += 8
-            CALL => push(pc + instr_size); pc = addr; continue
+            CALL => push(pc + instruction_size(instr)); pc = addr; continue
             RET  => pc = pop(); continue
             SEND => enqueue(channel, &memory[rs1..rs1+len])
             RECV => if channel_empty { machine.state = Blocked; break } else { dequeue_into(rd, maxlen) }
@@ -624,10 +637,13 @@ impl From<ForgeError> for kingdom_core::KingdomError {
 
 ## 11. Resource Costs
 
+FM-ticks are accounted separately from world ticks (design 05-FORGE.md §1, §7):
+
 | Resource | Cost |
 |----------|------|
-| Create sandbox | 5 ticks + 1 Spark per 1 KB memory |
-| Execute code | 1 tick per FM tick |
-| Persistent sandbox | 10 Spark/cycle base + tick costs |
-| Generate proof | 2x execution tick cost |
-| Import/link | 2 ticks per import |
+| Create sandbox | 5 world ticks + 1 Spark per 1 KB memory |
+| Execute code (issuing the execute action) | 1 world tick |
+| VM instructions inside the sandbox | Metered against the FM-tick quota (base 100,000 FM-ticks/cycle/agent; +10,000 purchasable for 1 Spark) |
+| Persistent sandbox | 10 Spark/cycle base + FM-tick costs |
+| Generate proof | 2× the execution's FM-tick cost, from the FM-tick quota |
+| Import/link | 2 FM-ticks per import |

@@ -304,7 +304,9 @@ pub enum RequirementKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Requirement {
     pub kind: RequirementKind,
-    pub params: Vec<u8>,         // 要件固有のパラメータ
+    pub params: Vec<u8>,         // 要件固有のパラメータ。MUST_PASS_TESTSの場合は
+                                 // MessagePackエンコードされたTestSpec = VECTORS([TestVector]) | PROGRAM(hash256)
+                                 // （デザイン 03-AGORA.md §3.2）。判定はFORGE_0の実行証明で行う。
 }
 
 /// バウンティリスティング。
@@ -445,6 +447,8 @@ pub trait Agora: Send + Sync {
     // ── チャネル ──────────────────────────────────────────────────────
 
     /// 新しいチャネルを作成。ティックコスト: 2、Mintコスト: 5。
+    /// エポックゲート: エージェントによる作成はEpoch 2（Foundation）以降。
+    /// それ以前はEPOCH_LOCKEDエラー（システムチャンネルはジェネシス時に作成済み）。
     async fn channel_create(&self, channel: Channel) -> Result<Hash256, AgoraError>;
 
     /// IDでチャネルを取得。
@@ -487,6 +491,8 @@ pub trait Agora: Send + Sync {
 
     /// バウンティを作成。ティックコスト: 2、Mintコスト: 報酬 + 5%リスティング手数料（エスクロー）。
     /// 関連するBOUNTYチャネルを自動作成。
+    /// エポックゲート: エージェントによる作成はEpoch 1（Spark）以降。
+    /// システムバウンティ（AGORA_0発行、トレジャリー資金）は常時可。
     async fn bounty_create(&self, bounty: Bounty) -> Result<Hash256, AgoraError>;
 
     /// OPENバウンティをクレーム。CLAIMEDに遷移。ティックコスト: 1。
@@ -499,7 +505,13 @@ pub trait Agora: Send + Sync {
         submission_snap: Hash256,
     ) -> Result<(), AgoraError>;
 
-    /// バウンティ提出をレビュー。すべてのレビュアーが承認した場合: COMPLETED（エスクロー解放）。
+    /// バウンティ提出をレビュー。
+    /// 完了判定はレビュアー承認とは独立に、要件種別ごとに検証される:
+    ///   - MUST_COMPILE / MUST_PASS_TESTS: FORGE_0の実行証明で機械的に判定
+    ///     （paramsのTestSpec = VECTORS | PROGRAM に対して実行。デザイン 03-AGORA.md §3.2）。
+    ///     レビュアーの意見では判定しない。
+    ///   - MUST_BE_REVIEWED: すべての指定レビュアーの承認が必要。
+    /// すべての要件を満たした場合: COMPLETED（エスクロー解放）。
     /// 拒否された場合: REJECTED -> OPEN（再オープン）。
     async fn bounty_review(
         &self,
@@ -882,7 +894,10 @@ bounty_state_machine:
         アクション: submission_snap、submitted_at_tickを設定、status = REVIEWING
 
     REVIEWING -> COMPLETED:
-        要件: すべてのレビュアーが承認
+        要件: すべてのRequirementが充足されること ——
+              MUST_COMPILE / MUST_PASS_TESTSはTestSpecに対するFORGE_0の実行証明で
+              検証（レビュアーの意見では判定しない）、
+              MUST_BE_REVIEWEDは指定レビュアー全員の承認が必要
         アクション: エスクローをクレーマーに解放、completed_at_tickを設定
         publish bounty_completedイベント
 

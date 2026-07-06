@@ -411,7 +411,7 @@ pub struct Event {
 | Forge | `0x4000–0x4FFF` |
 | Mint | `0x5000–0x5FFF` |
 | Portal | `0x6000–0x6FFF` |
-| Bridge | `0x8000–0x8FFF` |
+| Bridge | `0x8000–0x8FFF`（Observer内部チャネル専用 —— BRIDGE_0はSubstrate Busに書き込めないため、エージェント可視のバスには決して現れない。デザイン 01-NEXUS.md §4.3参照） |
 
 ### 5.4 サブスクリプションフィルター
 
@@ -438,6 +438,39 @@ pub struct SubstrateBus {
     lamport: AtomicU64,
     /// サブスクライバーチャネル。
     subscribers: DashMap<SubscriberId, Subscriber>,
+    /// 封印済み入力ストア — 非決定的な外部入力（LLMレスポンス、Portalレスポンス）の
+    /// ペイロード本体。バス上のイベントはcontent_hashのみを保持する
+    /// （デザイン 01-NEXUS.md §4.5）。アクセスはNEXUSリプレイとObserver/Bridgeのみ。
+    sealed_inputs: SealedInputStore,
+}
+
+/// 封印済み入力ストア（デザイン 01-NEXUS.md §4.5）。
+/// SEALED_INPUT_PATH（00-OVERVIEW.md §7）配下の追記専用・コンテンツアドレス型ストア。
+pub struct SealedInputStore {
+    path: PathBuf,
+}
+
+/// 非決定的な外部入力の種別。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExternalInputKind {
+    LlmResponse,   // エージェントのthink結果（Keyward経由）
+    WebResponse,   // PortalのWebレスポンス封筒
+}
+
+impl SealedInputStore {
+    /// 外部入力を記録し、content_hash = sha256(payload) を**内部で導出して**返す。
+    /// 返り値をバス上の対応イベントに載せる。ハッシュを呼び出し側から受け取らないのは、
+    /// payloadと一致しないハッシュで封印されるとリプレイ整合性が崩れるためである。
+    /// PortalとKeyward（Nexus経由）が取り込み時に呼び出す。
+    pub fn record_sealed_input(
+        &self,
+        kind: ExternalInputKind,
+        payload: Vec<u8>,
+    ) -> Result<Hash256, BusError>;
+
+    /// リプレイ時にcontent_hashからペイロードを読み出す（LLM/Webは再実行しない）。
+    /// 読み出したペイロードはsha256で再検証される。
+    pub fn read(&self, content_hash: &Hash256) -> Result<Option<Vec<u8>>, BusError>;
 }
 
 struct Subscriber {
@@ -658,8 +691,9 @@ pub enum Epoch {
     Open(u32),
 }
 
-/// 時間定数。
-pub const TICKS_PER_CYCLE: u64 = 256;
-pub const BASE_TICK_BUDGET: u64 = 64;
-pub const MAX_TICK_BUDGET: u64 = 256;
+/// 時間定数。サイクルは固定tick長を持たない（全アクティブエージェントが
+/// バジェットを消費/放棄した時点で終了 —— デザイン 01-NEXUS.md §2.1）。
+/// 以下はエージェントごとのバジェット境界であり、サイクル長ではない。
+pub const BASE_TICK_BUDGET: u64 = 64;   // エージェントごとの基本バジェット/サイクル
+pub const MAX_TICK_BUDGET: u64 = 256;   // エージェントごとの上限（基本64 + 購入192）
 ```

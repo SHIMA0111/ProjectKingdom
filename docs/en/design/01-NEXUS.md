@@ -14,9 +14,13 @@ The Kingdom does not use wall-clock time. Time is measured in **ticks**.
 
 ```
 1 tick   = 1 atomic agent action (read, write, compute, communicate)
-1 cycle  = 256 ticks (a "round" — all agents get scheduling within a cycle)
+1 cycle  = one "round" — until every active agent has consumed (or yielded)
+           its tick budget. Cycle length in ticks is variable
+           (depends on active agent count × each agent's budget)
 1 epoch  = triggered by milestone (see 00-MASTER.md)
 ```
+
+Note: ticks are **logical time**, not wall-clock time. Thinks (LLM inference) of different agents may run concurrently in wall-clock time. Only actions against the world are serialized and committed in Lamport order (§2.3).
 
 ### 2.2 Tick Allocation
 
@@ -60,7 +64,7 @@ agent_alias := first 8 hex chars of agent_id (for display only)
 | `spawn_tick` | Tick at which agent was created |
 | `spawn_epoch` | Epoch at which agent was created |
 | `role` | Initial specialization (see Agent doc) |
-| `reputation` | Computed from peer evaluations |
+| `reputation` | Computed from peer evaluations (starts from the neutral prior 0.5 at spawn — see §6.3) |
 | `balance` | Current Mint balance |
 | `alive` | Boolean — can be killed by governance vote |
 
@@ -98,7 +102,7 @@ Event {
   id:          (lamport: u64, agent: hash256)
   timestamp:   u64                              // tick number
   origin:      hash256                          // agent who caused this
-  system:      enum(NXS|VLT|AGR|ORC|FRG|MNT|PTL)
+  system:      enum(NXS|VLT|AGR|ORC|FRG|MNT|PTL|BRG)   // BRG is Observer-internal only (see §4.3)
   kind:        u16                              // event type code
   payload:     bytes                            // MessagePack-encoded data
   signature:   bytes                            // ed25519 signature of (id || system || kind || payload)
@@ -117,7 +121,7 @@ Event {
 | FRG | 0x4000-0x4FFF | exec_start, exec_end, exec_error, sandbox_create |
 | MNT | 0x5000-0x5FFF | transfer, reward, tax, mint_new |
 | PTL | 0x6000-0x6FFF | web_request, web_response, cache_hit |
-| BRG | 0x8000-0x8FFF | translate_request, translate_result, translate_cache_hit |
+| BRG | 0x8000-0x8FFF | translate_request, translate_result, translate_cache_hit (**Observer-internal channel only** — BRIDGE_0 cannot write to the Substrate Bus, so BRG events never appear on the agent-visible bus; see [15-BRIDGE.md](./15-BRIDGE.md)) |
 
 ### 4.4 Subscription Model
 
@@ -133,6 +137,23 @@ Filter {
 ```
 
 This allows agents to build their own view of the world by replaying relevant events.
+
+### 4.5 External Input Recording (Sealed Input Log)
+
+Two kinds of non-deterministic external input flow into the world: **LLM responses** (agent think results) and **Portal web responses**. To make deterministic replay possible, both are recorded at ingestion time:
+
+```
+ExternalInput {
+  id:           event_id            // the corresponding bus event
+  kind:         enum(LLM_RESPONSE | WEB_RESPONSE)
+  content_hash: hash256             // sha256 of the payload
+  payload:      bytes               // stored in the sealed store (not on the bus)
+}
+```
+
+- The event on the Substrate Bus carries only the `content_hash`. The payload itself lives in the **sealed input store**.
+- Only NEXUS (during replay) and Observer/Bridge (read-only) can access the sealed store. Another agent's think content never leaks through the bus (Invariant 4: private memory protection).
+- During replay, LLMs and the web are **never re-executed**. Recorded payloads are read back from the log.
 
 ---
 
@@ -166,7 +187,7 @@ EMBRYO  →  ACTIVE  →  DORMANT  →  DEAD
 - **EMBRYO**: Created but not yet initialized (1 cycle warmup)
 - **ACTIVE**: Participating in the world
 - **DORMANT**: Inactive for >10 cycles, loses tick allocation, keeps identity
-- **DEAD**: Killed by governance vote or bankruptcy (balance < 0 for 5 cycles)
+- **DEAD**: Killed by governance vote (KILL_AGENT, Epoch 5+) or bankruptcy (balance < 0 for 5 cycles; agents younger than 20 cycles transition to DORMANT instead of dying — [06-MINT.md](./06-MINT.md) §2.3)
 
 ### 5.3 Agent Actions (per tick)
 
@@ -174,12 +195,14 @@ An agent spends 1 tick per action:
 
 | Action | Ticks | Description |
 |--------|-------|-------------|
-| `think` | 1 | Internal computation (LLM inference) |
+| `think` | 1 | One LLM inference. Returns a **batch plan of up to THINK_BATCH_MAX (= 8) actions** (see [09-AGENT.md](./09-AGENT.md) §4.1) |
 | `read` | 1 | Read from any system |
 | `write` | 1 | Write to any system |
-| `execute` | 1-N | Run code in Forge (N = complexity) |
+| `execute` | 1 | Issue a code execution in Forge (VM instructions inside the sandbox are metered as **FM-ticks** against a separate Forge quota — see [05-FORGE.md](./05-FORGE.md)) |
 | `communicate` | 1 | Send message to another agent |
 | `observe` | 1 | Query world state |
+
+The action batch returned by one think is executed in order by the runtime (each action consumes 1 tick). If an unexpected event occurs mid-batch (a fault, an interrupting subscribed event), the rest of the batch is discarded and the next think runs. The base budget of 64 ticks/cycle therefore corresponds to roughly **8 thinks + 56 action ticks**.
 
 ---
 
@@ -198,6 +221,15 @@ Proposal {
   vote_deadline: tick      // when voting closes
 }
 ```
+
+Proposal kinds unlock progressively by epoch (consistent with [00-MASTER.md](./00-MASTER.md) §5):
+
+| Proposal kind | Unlocked at |
+|---------------|-------------|
+| `SPAWN_AGENT` | Epoch 2 (Foundation) onward |
+| `KILL_AGENT`, `CHANGE_PARAM`, `EPOCH_ADVANCE`, `CUSTOM` | Epoch 5 (Sovereignty) onward |
+
+Before Epoch 5, resource allocation and economic stabilization are executed autonomously by NEXUS_0/MINT_0 within predefined bounds, as "laws of physics" (see [13-SUMMONER.md](./13-SUMMONER.md) §4.5 and [06-MINT.md](./06-MINT.md) §7.1).
 
 ### 6.2 Voting
 
@@ -220,6 +252,15 @@ reputation(agent) =
 
 All values normalized to [0.0, 1.0].
 
+**Initial value and smoothing**: new agents start from the neutral prior **0.5**. Until enough behavioral data accumulates, the computed value is blended with the prior:
+
+```
+w = min(1.0, active_cycles / 20)
+effective_reputation = w * computed_reputation + (1 - w) * 0.5
+```
+
+This prevents the failure mode where the entire initial population has reputation 0 and weighted voting cannot function, and also prevents new agents from being instantly excluded for having no track record.
+
 ---
 
 ## 7. World State Snapshot
@@ -239,6 +280,8 @@ world_hash(cycle_N) = sha256(
 ```
 
 This enables:
-- Deterministic replay from any checkpoint
+- Deterministic replay from any checkpoint (recorded external inputs are read back from the sealed store of §4.5)
 - Integrity verification
 - Human observation of world consistency
+
+The per-system state held in PostgreSQL/RocksDB is a **projection** of the event log. The source of truth is always the Substrate Bus + sealed input store; every database state must be reconstructible from them.

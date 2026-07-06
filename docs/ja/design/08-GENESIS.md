@@ -99,6 +99,23 @@ enum Name {
 - ポインタ演算は許可される（これは低レベル言語である）。
 - nullなし。ポインタは有効か明示的にゼロ化（`0 as *T`）かのいずれか。
 
+### 4.4 演算セマンティクス
+
+曖昧さゼロの原則に従い、すべての演算の動作を定義する：
+
+| 演算 | セマンティクス |
+|------|--------------|
+| `+` `-` `*` | **2の補数でラップする**（mod 2^N、Nは型のビット幅）。オーバーフローはフォールトしない |
+| `/` `%` | ゼロ除数はForgeフォールト`DIVIDE_BY_ZERO`。符号付き除算は0方向へ切り捨て、剰余の符号は被除数に従う。`i64::MIN / -1`はラップして`i64::MIN` |
+| 比較 | 符号付き型は符号付き比較、符号なし型は符号なし比較 |
+| `<<` | 論理左シフト（SHL）。シフト量は`量 mod 64` |
+| `>>` | 符号なし型は論理右シフト（SHR）、符号付き型は算術右シフト（SAR）。シフト量は`量 mod 64` |
+| `~` / `!` | `~`は整数のビット反転（NOT命令）。`!`は`bool`専用の論理NOT |
+| `as`（縮小） | 下位ビットの切り捨て |
+| `as`（拡大） | 符号なし型からはゼロ拡張、符号付き型からは符号拡張 |
+
+符号付き型の比較・除算・剰余・右シフトはForgeの符号付き命令（`JLTS`/`DIVS`/`MODS`/`SAR`）に、符号なし型は符号なし命令（`JLT`/`DIV`/`MOD`/`SHR`）にコンパイルされる（[05-FORGE.md](./05-FORGE.md) §2.2参照）。
+
 ---
 
 ## 5. 式と文
@@ -118,8 +135,12 @@ a + b, a - b, a * b, a / b, a % b
 // 比較
 a == b, a != b, a < b, a > b, a <= b, a >= b
 
+// ビット演算
+a & b, a | b, a ^ b, ~a     // AND / OR / XOR / ビット反転（NOT命令）
+a << b, a >> b               // シフト（動作は§4.4参照）
+
 // 論理
-a & b, a | b, a ^ b, !a     // ビット演算
+!a                           // 論理NOT（boolのみ）
 a && b, a || b               // 短絡ブール（構文糖衣）
 
 // ポインタ操作
@@ -199,20 +220,32 @@ fn name(param: T) -> void {
 
 ## 7. インラインアセンブリ
 
-GenesisはForgeマシン命令への直接アクセスを提供する：
+GenesisはForgeマシン命令への直接アクセスを提供する。変数とレジスタの対応は**明示的な束縛**で宣言する（暗黙のレジスタ割り当てに依存するコードは不正である）：
+
+```
+asm ( 束縛, ... )? { 命令列 }
+
+束縛:
+  in  rN = expr      // ブロック実行前に式の値をレジスタrNへコピー
+  out lvalue = rN    // ブロック実行後にレジスタrNの値をlvalueへコピー
+```
 
 ```
 fn add_and_check(a: u64, b: u64) -> u64 {
-  let result: u64 = 0;
-  asm {
-    // レジスタ r0-r255 にアクセス可能
-    // 引数は r0, r1, ... に配置
+  let mut result: u64 = 0;
+  asm (in r0 = a, in r1 = b, out result = r2) {
     ADD r2, r0, r1
-    // 結果は 'result' にマッピングされたレジスタ
   };
   return result;
 }
 ```
+
+規則：
+- `in`/`out`は束縛リスト内でのみ意味を持つ**文脈キーワード**であり、予約語ではない（キーワードは§3.3の15語のまま）。
+- 束縛は種別でグループ化して実行される：すべての`in`はブロック実行前、すべての`out`はブロック実行後。各グループ内では、式・lvalueの評価とコピーは**束縛リストの記述順（左から右）**に行われる。
+- 束縛で指定されなかったレジスタの内容を仮定してはならない。コンパイラは`asm`ブロックが使用するレジスタを必要に応じて退避・復元する。
+- `out`のlvalueは`mut`でなければならない。
+- 同一レジスタへの複数の`in`束縛、同一レジスタからの複数の`out`束縛はコンパイルエラー。
 
 `asm`ブロックは、エージェントがForge I/Oチャンネルにアクセスし、システムコールを実行し、Genesisで表現できない低レベル操作を実装する方法である。
 
@@ -221,16 +254,16 @@ fn add_and_check(a: u64, b: u64) -> u64 {
 ```
 // stdout（チャンネル0）への書き込み
 fn print_byte(b: u8) -> void {
-  asm {
-    SEND 0, r0, 1
+  asm (in r0 = &b) {
+    SEND 0, r0, 1        // r0 = 送信バッファのアドレス、長さ1
   };
 }
 
 // stdin（チャンネル2）からの読み取り
 fn read_byte() -> u8 {
-  let b: u8 = 0;
-  asm {
-    RECV 2, r0, 1
+  let mut b: u8 = 0;
+  asm (in r0 = &b) {
+    RECV 2, r0, 1        // r0 = 受信バッファのアドレス、最大長1
   };
   return b;
 }
@@ -313,7 +346,11 @@ repo: GENESIS_BOOTSTRAP
 
 ### 9.3 セルフホスティング目標
 
-重要な初期マイルストーンは、GenisisコンパイラをGenesis自身で書き、それで自分自身をコンパイルすることである。これはエージェントが最初に目指すべき重要な成果である。
+重要な初期マイルストーンは、GenesisコンパイラをGenesis自身で書き、それで自分自身をコンパイルすることである。これはエージェントが最初に目指すべき重要な成果である。
+
+### 9.4 適合性テストスイート
+
+Oracle Entry #0には、本仕様の一部として**適合性テストスイート**が含まれる：正当なプログラムとその期待出力、および不正なプログラムとその期待エラー種別のコーパスである。エージェントが構築する代替コンパイラは、このスイートに対して検証することで正しさを主張できる（検証はFORGE_0の実行証明で行う）。
 
 ---
 
@@ -324,26 +361,24 @@ repo: GENESIS_BOOTSTRAP
 
 // 手動I/O —— 標準ライブラリなし
 fn write_u64(n: u64) -> void {
-  let buf: [u8; 20] = [0y00; 20];
-  let i: u64 = 19;
-  let val: u64 = n;
+  let mut buf: [u8; 20] = [0y00; 20];
+  let mut i: u64 = 20;
+  let mut val: u64 = n;
 
   if val == 0 {
     let zero: u8 = 48;
-    asm { SEND 0, r0, 1 };
+    asm (in r0 = &zero) { SEND 0, r0, 1 };
     return;
   };
 
   while val > 0 {
+    i = i - 1;
     buf[i] = (val % 10 + 48) as u8;
     val = val / 10;
-    i = i - 1;
   };
 
-  i = i + 1;
   while i < 20 {
-    let ch: u8 = buf[i];
-    asm { SEND 0, r0, 1 };
+    asm (in r0 = &buf[i]) { SEND 0, r0, 1 };
     i = i + 1;
   };
 }
@@ -389,3 +424,92 @@ fn main() -> void {
 Genesisはワールド作成時に**凍結**される。システムによって更新、パッチ、拡張されることは決してない。Oracleエントリ#0の仕様が正式かつ永久的である。
 
 エージェントはForgeバイトコードにコンパイルされる**新しい言語**を構築でき、実質的にGenesisを超えることができる。これは期待されており奨励されている。Genesisは種であり、天井ではない。
+
+---
+
+## 13. 形式文法（EBNF）
+
+「曖昧さゼロ」の原則に従い、Genesisの構文を形式的に定義する。この文法はOracle Entry #0の正式な一部である。
+
+```ebnf
+(* ── プログラム構造 ── *)
+program        = { item } ;
+item           = function | type_alias | struct_def | enum_def ;
+
+type_alias     = "type" IDENT "=" type ";" ;
+struct_def     = "struct" IDENT "{" [ field { "," field } [ "," ] ] "}" ;
+field          = IDENT ":" type ;
+enum_def       = "enum" IDENT "{" [ variant { "," variant } [ "," ] ] "}" ;
+variant        = IDENT [ "(" type { "," type } ")" ] ;
+
+function       = "fn" IDENT "(" [ param { "," param } ] ")" "->" type block ;
+param          = IDENT ":" type ;
+
+(* ── 型 ── *)
+type           = "u8" | "u16" | "u32" | "u64"
+               | "i8" | "i16" | "i32" | "i64"
+               | "bool" | "void"
+               | "*" [ "mut" ] type                          (* ポインタ *)
+               | "[" type ";" INTEGER "]"                    (* 固定長配列 *)
+               | "*" "fn" "(" [ type { "," type } ] ")" "->" type  (* 関数ポインタ *)
+               | IDENT ;                                     (* 名前付き型 *)
+
+(* ── ブロックと文 ── *)
+block          = "{" { statement } [ expression ] "}" ;
+statement      = let_stmt | assign_stmt | if_stmt | while_stmt
+               | return_stmt | "break" ";" | "continue" ";"
+               | asm_stmt | expression ";" ;
+let_stmt       = "let" [ "mut" ] IDENT ":" type "=" expression ";" ;
+assign_stmt    = lvalue "=" expression ";" ;
+if_stmt        = "if" expression block [ "else" ( block | if_stmt ) ] [ ";" ] ;
+while_stmt     = "while" expression block [ ";" ] ;
+return_stmt    = "return" [ expression ] ";" ;
+lvalue         = IDENT
+               | "*" unary
+               | postfix "[" expression "]"
+               | postfix "." IDENT
+               | postfix "->" IDENT ;
+
+(* ── インラインアセンブリ ── *)
+asm_stmt       = "asm" [ "(" asm_binding { "," asm_binding } ")" ] "{" { asm_instruction } "}" ";" ;
+asm_binding    = "in" REGISTER "=" expression
+               | "out" lvalue "=" REGISTER ;
+asm_instruction = MNEMONIC [ asm_operand { "," asm_operand } ] ;
+asm_operand    = REGISTER | INTEGER | IDENT ;                (* レジスタ / 即値 / シンボリックラベル *)
+MNEMONIC       = IDENT ;   (* Forgeニーモニックのいずれか — 05-FORGE.md §2.2の命令セット。
+                              未知のニーモニックはコンパイルエラー *)
+REGISTER       = "r" DIGIT { DIGIT } ;                       (* r0 〜 r255 *)
+DIGIT          = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+(* "in"/"out"は束縛リスト内でのみ認識される文脈キーワード *)
+
+(* ── 式（優先順位は下の表を参照）── *)
+expression     = or_expr | if_expr | match_expr | block ;
+if_expr        = "if" expression block "else" ( block | if_expr ) ;
+match_expr     = "match" expression "{" match_arm { "," match_arm } [ "," ] "}" ;
+match_arm      = pattern "=>" expression ;
+pattern        = "_" | INTEGER | "true" | "false"
+               | IDENT [ "(" IDENT { "," IDENT } ")" ] ;     (* enumバリアント束縛 *)
+
+or_expr        = and_expr { "||" and_expr } ;
+and_expr       = cmp_expr { "&&" cmp_expr } ;
+cmp_expr       = bitor_expr [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) bitor_expr ] ;
+bitor_expr     = bitxor_expr { "|" bitxor_expr } ;
+bitxor_expr    = bitand_expr { "^" bitand_expr } ;
+bitand_expr    = shift_expr { "&" shift_expr } ;
+shift_expr     = add_expr { ( "<<" | ">>" ) add_expr } ;
+add_expr       = mul_expr { ( "+" | "-" ) mul_expr } ;
+mul_expr       = cast_expr { ( "*" | "/" | "%" ) cast_expr } ;
+cast_expr      = unary { "as" type } ;
+unary          = ( "!" | "-" | "*" | "&" | "~" ) unary | postfix ;
+postfix        = primary { "(" [ expression { "," expression } ] ")"   (* 呼び出し *)
+                         | "[" expression "]"                          (* 添字 *)
+                         | "." IDENT                                   (* フィールド *)
+                         | "->" IDENT } ;                              (* ポインタ経由 *)
+primary        = INTEGER | BYTE | STRING | "true" | "false"
+               | IDENT | "(" expression ")"
+               | "[" expression ";" INTEGER "]" ;                      (* 配列初期化 *)
+```
+
+**演算子優先順位**（高い順）：後置（呼び出し/添字/フィールド） > 単項（`!` `-` `*` `&` `~`） > `as` > `*` `/` `%` > `+` `-` > `<<` `>>` > `&` > `^` > `|` > 比較 > `&&` > `||`。二項演算子と`as`は左結合：`x as A as B`は`(x as A) as B`と解析される。単項前置演算子は右結合（`!!x` = `!(!x)`）。ビット演算が比較より強く結合する点に注意：`a & b == c`は`(a & b) == c`と解析される（Cの歴史的な優先順位バグを踏襲しない）。
+
+比較演算子は**非結合**である：`a < b < c`は構文エラー。

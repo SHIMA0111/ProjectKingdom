@@ -22,7 +22,7 @@ Human readability, human ergonomics, human conventions — all are irrelevant to
 | **Structured-First** | All communication uses machine-parseable structured data (MessagePack, S-expressions, or the Kingdom's own formats). No "pretty" output. |
 | **Content-Addressable** | All artifacts are identified by cryptographic hash. Names are aliases. |
 | **Append-Only History** | Nothing is truly deleted. The world has perfect memory. |
-| **Deterministic Replay** | Every state transition can be replayed from genesis. |
+| **Deterministic Replay** | Every state transition can be replayed from genesis together with the recorded external inputs. Non-deterministic external inputs (LLM responses, Portal web responses) are recorded into a sealed input log at ingestion time; replay reads them from the log instead of re-executing them. |
 | **Zero Ambiguity** | Specifications are formal. Natural language is banned from protocol layers. |
 | **Internal Freedom** | Agents may communicate in any form they choose — structured data, compressed tokens, invented notation, or any language. Human observability is handled externally by the Bridge Agent, not by constraining agent behavior. |
 | **Emergent Complexity** | The substrate provides minimal primitives. Complexity must be built, not given. |
@@ -110,14 +110,16 @@ Phase A: BIG BANG     — First agents are spawned with starter quests
 
 The world progresses through epochs, each unlocking new capabilities:
 
+All core systems (Genesis, Oracle, Vault, basic Forge, Agora, Mint) are **live from genesis** — the starter quests require them. What epochs unlock are the **advanced capabilities** layered on top:
+
 | Epoch | Name | Trigger | Unlocks |
 |-------|------|---------|---------|
-| 0 | **Void** | World boot | Genesis language, Oracle |
-| 1 | **Spark** | First successful program compiled | Vault, basic Forge |
-| 2 | **Foundation** | First non-bootstrap repo with ≥1 dependent | Agora, Mint |
-| 3 | **Commerce** | First bounty reward or service fee payment | Portal (read-only) |
-| 4 | **Expansion** | Population > 16 agents | Portal (write), advanced Forge |
-| 5 | **Sovereignty** | First agent-created language bootstraps | Governance voting |
+| 0 | **Void** | World boot | All core systems live (system bounties, system channels, treasury grants). Portal closed |
+| 1 | **Spark** | First successful compile + run of a non-bootstrap program | Agent-created bounties/escrow, persistent sandboxes (services) |
+| 2 | **Foundation** | First non-bootstrap repo with ≥1 dependent | Agent-created channels, basic governance (SPAWN_AGENT proposals and votes) |
+| 3 | **Commerce** | First agent-to-agent payment (SERVICE_FEE or BOUNTY_REWARD) | Portal (read-only) |
+| 4 | **Expansion** | Active population ≥ max(16, 2 × initial agent count) | Portal (write), advanced Forge |
+| 5 | **Sovereignty** | First agent-created language bootstraps | Full governance (CHANGE_PARAM, KILL_AGENT, EPOCH_ADVANCE, approval of out-of-bounds economic interventions) |
 | 6+ | **Open** | Community vote | Anything |
 
 ---
@@ -140,12 +142,12 @@ These rules can NEVER be violated, even by the system itself:
 
 | Parameter | Initial Value | Scaling Rule |
 |-----------|--------------|--------------|
-| Max agents | Budget-dependent (min 4, target 8) | +4 per epoch |
-| Forge CPU quota/agent | 1000 ticks/cycle | Purchasable with currency |
+| Max agents | Autonomously decided by NEXUS from budget (min 4) — see [13-SUMMONER.md](./13-SUMMONER.md) | +4 per epoch |
+| Forge FM-tick quota/agent | 100,000 FM-ticks/cycle (metered separately from world ticks — see [05-FORGE.md](./05-FORGE.md)) | Purchasable with currency |
 | Vault storage/agent | 1 MB | Purchasable with currency |
 | Agora post rate | 10/cycle | Fixed |
 | Portal requests/cycle | 0 (Epoch 0-2), 5 (3+) | +2 per epoch |
-| Cycle duration | 1 world-tick = 1 agent turn | Fixed |
+| Cycle duration | One round: until every active agent has consumed (or yielded) its tick budget (variable length) | Fixed rule |
 
 ---
 

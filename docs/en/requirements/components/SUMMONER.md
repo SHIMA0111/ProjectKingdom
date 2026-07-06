@@ -190,6 +190,8 @@ pub struct ModelInfo {
     pub max_context: u32,
     /// USD per 1M input tokens.
     pub input_cost: f64,
+    /// USD per 1M cached input tokens (= input_cost if the provider has no caching).
+    pub cached_input_cost: f64,
     /// USD per 1M output tokens.
     pub output_cost: f64,
     /// Capability tier (classified by pricing).
@@ -512,12 +514,15 @@ fn plan_civilization(budget_usd: f64, models: Vec<ModelInfo>, rate_limits: Vec<R
     agent_budget = budget_usd * 0.90
 
     // Step 1: Estimate cost per agent per cycle
-    //   1 cycle = ~10 think calls (average)
-    //   1 think = ~2000 input tokens + ~500 output tokens
+    //   1 cycle = ~8 think calls (batch-think model: 64 ticks ≈ 8 thinks + 56 action ticks
+    //   — see design 09-AGENT.md §4.1)
+    //   1 think = ~7000 input tokens (of which ~5000 are a prompt-cache-eligible stable prefix)
+    //           + ~800 output tokens
     avg_model = select_representative_model(models, ThinkTier::Tier2)
-    cost_per_think = (2000 * avg_model.input_cost / 1_000_000)
-                   + (500 * avg_model.output_cost / 1_000_000)
-    cost_per_agent_per_cycle = cost_per_think * 10
+    cost_per_think = (5000 * avg_model.cached_input_cost / 1_000_000)
+                   + (2000 * avg_model.input_cost / 1_000_000)
+                   + (800 * avg_model.output_cost / 1_000_000)
+    cost_per_agent_per_cycle = cost_per_think * 8
 
     // Step 2: Determine sustainable cycle count
     min_cycles = 100
@@ -527,12 +532,15 @@ fn plan_civilization(budget_usd: f64, models: Vec<ModelInfo>, rate_limits: Vec<R
     max_agents_ideal = floor(agent_budget / (ideal_cycles * cost_per_agent_per_cycle))
     max_agents_min = floor(agent_budget / (min_cycles * cost_per_agent_per_cycle))
     max_agents_rate = compute_max_from_rate_limits(rate_limits)
-    agent_count = clamp(max_agents_ideal, 4, max_agents_rate)
 
-    // Step 4: If budget too low for 4 agents at ideal, try cheaper models
-    if agent_count < 4:
-        retry with TIER_2/TIER_3 models only
-        if still < 4: return error (budget too low)
+    // Step 4: If the budget cannot sustain 4 agents, try cheaper models
+    //   (checked BEFORE clamping — after the clamp agent_count is always >= 4,
+    //    so the test keys on max_agents_min)
+    if max_agents_min < 4:
+        retry from Step 1 with TIER_2/TIER_3 models only
+        if still max_agents_min < 4: return error (budget too low)
+
+    agent_count = clamp(max_agents_ideal, 4, max_agents_rate)
 
     // Step 5: Distribute roles
     roles = distribute_roles(agent_count)

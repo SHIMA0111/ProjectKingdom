@@ -222,6 +222,7 @@ cargo run --bin kingdom -- start --budget 50.00 --key ANTHROPIC_API_KEY=sk-ant-.
 | `OBSERVER_UI_DIR` | いいえ | `./observer-ui/dist` | Reactフロントエンド用静的ファイル |
 | `RUST_LOG` | いいえ | `info` | ログレベルフィルター |
 | `EVENT_LOG_PATH` | いいえ | `./data/events` | イベントバスWALディレクトリ |
+| `SEALED_INPUT_PATH` | いいえ | `./data/sealed` | 封印済み外部入力ストア（LLM/Webレスポンス —— デザイン 01-NEXUS.md §4.5） |
 
 ---
 

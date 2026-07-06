@@ -106,6 +106,7 @@ ModelInfo {
   model_id:         string
   max_context:      u32          // トークン数
   input_cost:       f64          // 100万入力トークンあたりのUSD
+  cached_input_cost: f64         // キャッシュ済み入力100万トークンあたりのUSD（未対応なら= input_cost）
   output_cost:      f64          // 100万出力トークンあたりのUSD
   capability_tier:  enum(TIER_1 | TIER_2 | TIER_3)  // 下記参照
   supports_structured: bool      // 構造化出力のサポート
@@ -137,10 +138,21 @@ NEXUSは予算から最適なエージェント構成を計算する：
 ```
 fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLimits]) -> WorldPlan {
 
+  // ステップ0: Bridge翻訳用に総予算の10%を予約（§4.1、15-BRIDGE.md §7）
+  bridge_budget = budget_usd * 0.10
+  agent_budget  = budget_usd * 0.90
+
   // ステップ1: エージェントあたりcycleあたりのコストを推定
-  //   - 1 cycle = 約10回のthinkコール（平均）
-  //   - 1 think = 約2000入力トークン + 約500出力トークン
-  estimated_cost_per_agent_per_cycle = estimate(models)
+  //   - 1 cycle = 約8回のthinkコール（バッチthinkモデル: 基本64 tick ≈ 8 think + 56アクションtick
+  //     — 09-AGENT.md §4.1参照）
+  //   - 1 think ≈ 約7000入力トークン（うち約5000は安定プレフィックスでプロンプトキャッシュ対象、
+  //     §5.4のコンテキスト予算と整合）+ 約800出力トークン
+  //   - 実効入力コストはプロンプトキャッシュを前提とする:
+  //     effective_input = 5000 * cache_discount + 2000    （cache_discount ≈ 0.1）
+  cost_per_think = (5000 * model.cached_input_cost
+                  + 2000 * model.input_cost
+                  + 800  * model.output_cost) / 1_000_000
+  estimated_cost_per_agent_per_cycle = 8 * cost_per_think
 
   // ステップ2: 持続可能なcycle数から逆算
   //   - 最小100 cycle必要（有意義な進捗の閾値）
@@ -149,15 +161,18 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   ideal_cycles = 1000
 
   // ステップ3: エージェント数の決定
-  max_agents_ideal = floor(budget_usd / (ideal_cycles * estimated_cost_per_agent_per_cycle))
-  max_agents_min   = floor(budget_usd / (min_cycles * estimated_cost_per_agent_per_cycle))
-
-  agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
+  max_agents_ideal = floor(agent_budget / (ideal_cycles * estimated_cost_per_agent_per_cycle))
+  max_agents_min   = floor(agent_budget / (min_cycles * estimated_cost_per_agent_per_cycle))
 
   // ステップ4: 予算不足ならモデルをダウングレード
-  if agent_count < 4 {
-    TIER_2/TIER_3モデルのみで再試行
+  //   （クランプ後ではagent_countは常に4以上になるため、クランプ前に
+  //     max_agents_minで判定する —— min_cyclesですら4体を賄えないかのチェック）
+  if max_agents_min < 4 {
+    TIER_2/TIER_3モデルのみでステップ1から再試行
+    それでも max_agents_min < 4 なら: エラー（予算が低すぎる）
   }
+
+  agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
 
   // ステップ5: 役割の分配（固定比率）
   roles = distribute_roles(agent_count)
@@ -166,11 +181,26 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   //   - ARCHITECT, COMPILER_SMITH → TIER_1優先
   //   - LIBRARIAN, GENERALIST → TIER_2
   //   - 予算が厳しい場合 → すべてTIER_3
-  model_assignment = assign_models(roles, models, budget_usd)
+  model_assignment = assign_models(roles, models, agent_budget)
 
-  return WorldPlan { agent_count, roles, model_assignment, estimated_cycles }
+  // ステップ7: 選択した構成での持続可能cycle数を推定
+  estimated_cycles = floor(agent_budget / (agent_count * estimated_cost_per_agent_per_cycle))
+
+  return WorldPlan { agent_count, roles, model_assignment, estimated_cycles,
+                     bridge_budget, agent_budget }
 }
 ```
+
+**具体例**（予算$50 → エージェント予算$45（90%）、TIER_3モデル: 入力$1/M・キャッシュ済み入力$0.1/M・出力$5/M と仮定）：
+
+```text
+cost_per_think ≈ (5000×0.1 + 2000×1.0 + 800×5.0) / 1,000,000 ≈ $0.0065
+cost_per_agent_per_cycle ≈ 8 × $0.0065 ≈ $0.052
+→ 4エージェント構成: $0.208/cycle → $45で約216 cycle（min 100 cycleを満たす）
+→ TIER_1/2を多用する構成では100 cycleを下回るため、NEXUSはTIER_3中心を選択する
+```
+
+これらの見積もりは**事前値**にすぎない。稼働後、NEXUSはCostTracker（§6.1）で実測バーンレートを継続的に計測し、計画を再計算する。推定が外れても世界は自動的に適応する。
 
 ### 4.4 固定の役割配分比率
 
@@ -209,7 +239,9 @@ if burn_rate > planned_rate * 1.3 {
   // オプション（NEXUSが自律的に決定）:
   option_a: エージェント数の削減（最も非アクティブなエージェントをDORMANTに）
   option_b: 一部エージェントをTIER_3モデルにダウングレード
-  option_c: think頻度の低減（バッチtick数の増加）
+  option_c: think頻度の低減（各thinkにTHINK_BATCH_MAX（=8、固定定数）の上限まで
+            バッチを満たすよう促し、think間の間隔を延ばす。上限自体は変更しない ——
+            レスポンススキーマとパーサが依存する公開定数のため）
 }
 
 // 予算に余裕がある場合
@@ -226,7 +258,9 @@ if burn_rate < planned_rate * 0.5 && epoch_milestone_near {
 
 ### 5.1 エージェント ↔ LLMマッピング
 
-各エージェントの「思考」は1つのLLM APIコールに対応する：
+各エージェントの「思考」（think）は1つのLLM APIコールに対応し、**最大THINK_BATCH_MAX（=8）アクションのバッチ計画**を返す（[09-AGENT.md](./09-AGENT.md) §4.1参照）。
+
+壁時計時間について：異なるエージェントのthinkは、プロバイダーのレート制限の範囲内で**並行に**実行される。NEXUSはスループットを最大化するようにthinkをスケジュールし、ワールドアクションのみがLamport順序でシリアライズされる（[01-NEXUS.md](./01-NEXUS.md) §2.3）。1 cycleの壁時計時間は「エージェントあたりのthink数 × レイテンシ」程度であり、全エージェントの合計ではない。
 
 ```
 Kingdom側:                        LLM側:
@@ -252,23 +286,29 @@ Kingdom側:                        LLM側:
   agent_id, role, traits, reputation, balance
 
 [YOUR MEMORY]
-  ワーキングメモリ + 関連する長期記憶
-
-[CURRENT STATE]
-  cycle, tick, epoch, 前回のthink以降の購読イベント
+  ワーキングメモリ + 関連する長期記憶（cycle内では安定）
 
 [AVAILABLE ACTIONS]
-  このtickで実行可能なアクションのリスト（構造化）
+  このthinkのバッチで利用可能なアクションのスキーマ（構造化、固定）
 
 [RESPONSE FORMAT]
   以下のJSONフォーマットで応答すること:
   {
-    "action": "...",
-    "params": { ... },
-    "reasoning": "...",        // 内部推論（メモリ更新に使用）
-    "memory_update": { ... }   // 永続メモリへの書き込み
+    "actions": [                 // 最大THINK_BATCH_MAX（=8）件のアクションバッチ
+      { "action": "...", "params": { ... } },
+      ...
+    ],
+    "reasoning": "...",          // 内部推論（メモリ更新に使用、他エージェントには非公開）
+    "memory_update": { ... }     // 永続メモリへの書き込み
   }
+
+─── ここまで安定プレフィックス（think間で不変、プロンプトキャッシュ対象）───
+
+[CURRENT STATE]  ← 可変部（毎thinkで変化）
+  cycle, tick, epoch, 前回のthink以降の購読イベント、直近のアクション履歴
 ```
+
+セクションの順序は**安定なものが先頭**になるよう設計されている：[WORLD RULES]、[YOUR IDENTITY]、[YOUR MEMORY]、[AVAILABLE ACTIONS]、[RESPONSE FORMAT]がthink間で安定したプレフィックス（約5000トークン）を構成し、プロバイダーのプロンプトキャッシュにヒットする。可変の[CURRENT STATE]は末尾に置かれる。これが§4.3と§5.4のコスト見積もりの前提である。
 
 ### 5.3 Thinkティアルーティング
 
@@ -301,14 +341,19 @@ fn classify_think(agent: Agent, context: ThinkContext) -> ThinkTier {
 ```
 ContextBudget {
   total_tokens:     model.max_context
-  system_prompt:    ~2000 tokens (固定)
-  identity:         ~500 tokens (固定)
-  memory:           ~2000 tokens (圧縮/要約済み)
+  // ── 安定プレフィックス（プロンプトキャッシュ対象、合計 ~5000トークン）──
+  system_prompt:    ~2000 tokens (固定 — WORLD RULES)
+  identity:         ~500 tokens (準固定 — YOUR IDENTITY)
+  memory:           ~2000 tokens (圧縮/要約済み — cycle内では安定)
+  action_schema:    ~500 tokens (固定 — AVAILABLE ACTIONS + RESPONSE FORMAT)
+  // ── 可変部（毎thinkで変化、合計 ~2000トークン）──
   world_state:      ~1500 tokens (関連情報のみ)
-  action_history:   ~1000 tokens (直近のみ)
-  available_space:   残り（レスポンス用）
+  action_history:   ~500 tokens (直近のみ)
+  available_space:   残り（レスポンス用、出力は~800トークンを想定）
 }
 ```
+
+合計入力は約7000トークン。§4.3のコスト見積もり（キャッシュ対象5000 + 可変2000 + 出力800）はこの構造から導出される。
 
 ### 5.5 レスポンスパース失敗時の処理
 

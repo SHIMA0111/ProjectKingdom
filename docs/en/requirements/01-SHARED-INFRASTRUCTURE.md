@@ -411,7 +411,7 @@ pub struct Event {
 | Forge | `0x4000–0x4FFF` |
 | Mint | `0x5000–0x5FFF` |
 | Portal | `0x6000–0x6FFF` |
-| Bridge | `0x8000–0x8FFF` |
+| Bridge | `0x8000–0x8FFF` (Observer-internal channel only — BRIDGE_0 cannot write to the Substrate Bus, so these never appear on the agent-visible bus; see design 01-NEXUS.md §4.3) |
 
 ### 5.4 Subscription Filter
 
@@ -438,6 +438,41 @@ pub struct SubstrateBus {
     lamport: AtomicU64,
     /// Subscriber channels.
     subscribers: DashMap<SubscriberId, Subscriber>,
+    /// Sealed input store — payload bodies of non-deterministic external inputs
+    /// (LLM responses, Portal responses). Events on the bus carry only the
+    /// content_hash (design 01-NEXUS.md §4.5). Accessible only to NEXUS replay
+    /// and Observer/Bridge.
+    sealed_inputs: SealedInputStore,
+}
+
+/// The sealed input store (design 01-NEXUS.md §4.5).
+/// An append-only, content-addressed store under SEALED_INPUT_PATH (00-OVERVIEW.md §7).
+pub struct SealedInputStore {
+    path: PathBuf,
+}
+
+/// Kind of a non-deterministic external input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExternalInputKind {
+    LlmResponse,   // agent think results (via Keyward)
+    WebResponse,   // Portal web response envelopes
+}
+
+impl SealedInputStore {
+    /// Record an external input and return content_hash = sha256(payload),
+    /// **derived internally**. The returned hash goes onto the corresponding
+    /// bus event. The hash is deliberately not caller-provided: sealing bytes
+    /// under a hash that doesn't match the payload would break replay integrity.
+    /// Called by Portal and by Keyward (via Nexus) at ingestion time.
+    pub fn record_sealed_input(
+        &self,
+        kind: ExternalInputKind,
+        payload: Vec<u8>,
+    ) -> Result<Hash256, BusError>;
+
+    /// Read a payload back by content_hash during replay (LLM/web are never re-executed).
+    /// The payload read back is re-verified against its sha256.
+    pub fn read(&self, content_hash: &Hash256) -> Result<Option<Vec<u8>>, BusError>;
 }
 
 struct Subscriber {
@@ -658,8 +693,9 @@ pub enum Epoch {
     Open(u32),
 }
 
-/// Time constants.
-pub const TICKS_PER_CYCLE: u64 = 256;
-pub const BASE_TICK_BUDGET: u64 = 64;
-pub const MAX_TICK_BUDGET: u64 = 256;
+/// Time constants. Cycles have no fixed tick length (a cycle ends when every
+/// active agent has consumed/yielded its budget — design 01-NEXUS.md §2.1).
+/// The following are per-agent budget bounds, not cycle lengths.
+pub const BASE_TICK_BUDGET: u64 = 64;   // per-agent base budget per cycle
+pub const MAX_TICK_BUDGET: u64 = 256;   // per-agent cap (base 64 + purchased 192)
 ```

@@ -428,17 +428,27 @@ pub struct ThinkContext {
     pub is_simple_decision: bool,
 }
 
-/// LLM出力からパースされた構造化アクションレスポンス。
+/// 1回のthinkが返すアクションバッチの最大数（デザイン 09-AGENT.md §4.1）。
+pub const THINK_BATCH_MAX: usize = 8;
+
+/// LLM出力からパースされた構造化レスポンス（1 think = 1 LLMコール）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkOutput {
+    /// 順に実行されるアクションバッチ（最大THINK_BATCH_MAX件）。
+    pub actions: Vec<AgentAction>,
+    /// 内部推論（メモリに保存、ブロードキャストしない）。
+    pub reasoning: String,
+    /// 永続メモリへの更新。
+    pub memory_update: Option<serde_json::Value>,
+}
+
+/// バッチ内の単一アクション。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentAction {
     /// 実行するアクション。
     pub action: String,
     /// アクションパラメータ。
     pub params: serde_json::Value,
-    /// 内部推論（メモリに保存、ブロードキャストしない）。
-    pub reasoning: String,
-    /// 永続メモリへの更新。
-    pub memory_update: Option<serde_json::Value>,
 }
 ```
 
@@ -496,9 +506,9 @@ pub trait AgentRuntime: Send + Sync {
         parent: Option<AgentId>,
     ) -> Result<AgentId, AgentError>;
 
-    /// 指定されたエージェントのOODAループの1ティックを実行。
-    /// 取られたアクション（またはNOPの場合None）を返す。
-    async fn tick(&self, agent_id: &AgentId) -> Result<Option<AgentAction>, AgentError>;
+    /// 指定されたエージェントの1 think（OODAループ1回 + アクションバッチ実行）を実行。
+    /// 実行されたThinkOutput（またはNOPの場合None）を返す。
+    async fn think(&self, agent_id: &AgentId) -> Result<Option<ThinkOutput>, AgentError>;
 
     /// 指定されたエージェントの完全なサイクル（すべての割り当てられたティック）を実行。
     async fn run_cycle(&self, agent_id: &AgentId, tick_budget: u64) -> Result<(), AgentError>;
@@ -591,7 +601,7 @@ Agentランタイムがシステムデーモンに送信するメッセージ:
 | `0x0310` | `BOUNTY_CREATE` | `Bounty` | Agora | バウンティを作成。|
 | `0x0311` | `BOUNTY_CLAIM` | `{ bounty_id, claimer }` | Agora | バウンティをクレーム。|
 | `0x0312` | `BOUNTY_SUBMIT` | `{ bounty_id, submission_snap }` | Agora | バウンティ作業を提出。|
-| `0x0313` | `BOUNTY_REVIEW` | `{ bounty_id, verdict, comments }` | Agora | バウンティ提出をレビュー。|
+| `0x0313` | `BOUNTY_REVIEW` | `{ bounty_id, reviewer, approved, comments }` | Agora | バウンティ提出をレビュー。|
 | `0x0320` | `REVIEW_REQUEST` | `ReviewRequest` | Agora | コードレビューをリクエスト。|
 | `0x0321` | `REVIEW_SUBMIT` | `Review` | Agora | コードレビューを提出。|
 | `0x0400` | `ENTRY_PUBLISH` | `{ entry: OracleEntry, review: ReviewMode }` | Oracle | 知識を公開。|
@@ -622,8 +632,9 @@ Agentランタイムがシステムデーモンに送信するメッセージ:
 
 | メトリック | ターゲット | 備考 |
 |--------|--------|-------|
-| OODAループレイテンシ（LLM呼び出し除く）| ティックごとに < 5 ms | プロセス内イベント処理 + メモリ更新 |
+| OODAループレイテンシ（LLM呼び出し除く）| thinkごとに < 5 ms | プロセス内イベント処理 + メモリ更新 |
 | LLM呼び出しレイテンシ予算 | thinkごとに1-30 s | モデルティアとプロバイダーに依存 |
+| think頻度 | エージェントあたり~8回/サイクル | バッチthinkモデル（THINK_BATCH_MAX = 8） |
 | エージェントメモリ永続化（フラッシュ）| < 50 ms | バッチPostgreSQL書き込み |
 | データベースからのエージェントロード | < 20 ms | 単一エージェント完全状態ロード |
 | 目標優先順位付け | < 1 ms | 純粋計算、I/Oなし |
@@ -745,13 +756,13 @@ CREATE INDEX idx_goals_agent_layer ON agent.goals(agent_id, layer);
 
 ## 10. 主要アルゴリズム
 
-### 10.1 OODAループ（ティックごと）
+### 10.1 OODAループ（thinkごと —— バッチthinkモデル）
 
-各ティックで、アクティブエージェントは以下を実行します:
+エージェントの思考単位は**think**（1 think = 1 LLMコール = 1ティック）。1回のthinkは最大THINK_BATCH_MAX（=8）アクションのバッチ計画を返し、ランタイムがそれを順に実行します:
 
-```
+```text
 1. OBSERVE（観察）
-   - 最後のティック以降のすべてのサブスクライブされたイベントをイベントバスから読み取る。
+   - 最後のthink以降のすべてのサブスクライブされたイベントをイベントバスから読み取る。
    - 現在のワールド状態（cycle、epoch、tick位置）をフェッチ。
    - 残高とレピュテーションをチェック。
 
@@ -765,22 +776,23 @@ CREATE INDEX idx_goals_agent_layer ON agent.goals(agent_id, layer);
 3. DECIDE（決定）
    - スタックから最高優先度の目標を選択。
    - 目標がプランを必要とし、存在しない場合、プランを作成。
-   - 現在のプランステップから次のアクションを選択。
    - thinkティア（TIER_1/TIER_2/TIER_3）を分類。
-   - LLMプロンプトを構築（system + identity + memory + state + actions）。
+   - LLMプロンプトを構築（system + identity + memory + actions → state。安定プレフィックスが先 —— §10.6 / デザイン 13-SUMMONER.md §5.2）。
 
 4. ACT（行動）
-   - Nexus -> Keyward経由でLLMリクエストを送信。
-   - 構造化JSONレスポンスをAgentActionにパース。
+   - Nexus -> Keyward経由でLLMリクエストを送信（1ティック消費）。
+   - 構造化JSONレスポンスをThinkOutput（アクションバッチ）にパース。
    - パース失敗時: 最大2回リトライ、その後NOP。
-   - 適切なKDOMメッセージを送信してアクションを実行。
-   - 予算から1ティックを消費。
+   - バッチ内の各アクションを順に実行（各アクションが1ティックを消費）。
+   - フォールトや割り込みイベントが発生した場合、残りのバッチを破棄して次のthinkへ。
 
 5. RECORD（記録）
-   - アクションとその結果からExperienceを作成。
+   - 各アクションとその結果からExperienceを作成。
    - ワーキングメモリを更新。
    - メモリ更新をPostgreSQLに永続化（サイクル終了時にバッチ処理）。
 ```
+
+基本バジェット64ティック/サイクルは、おおよそ8 think + 56アクションティックに相当します。
 
 ### 10.2 目標優先順位付け
 
@@ -842,13 +854,16 @@ fn classify_think(agent: &Agent, context: &ThinkContext) -> ThinkTier {
 
 ```
 総トークン: model.max_context
-割り当て:
+割り当て（安定プレフィックスを先頭に —— プロンプトキャッシュにヒットさせる）:
+    // 安定プレフィックス（キャッシュ対象、合計~5000トークン）
     system_prompt:    ~2000トークン（WORLD RULES - 固定）
     identity:         ~500トークン（YOUR IDENTITY - agent_id、role、traits、rep、balance）
-    memory:           ~2000トークン（YOUR MEMORY - 圧縮working + 関連長期）
+    memory:           ~2000トークン（YOUR MEMORY - 圧縮working + 関連長期、サイクル内では安定）
+    action_schema:    ~500トークン（AVAILABLE ACTIONS + RESPONSE FORMAT - 固定）
+    // 可変部（毎thinkで変化、合計~2000トークン）
     world_state:      ~1500トークン（CURRENT STATE - cycle、tick、epoch、最近のイベント）
-    action_history:   ~1000トークン（連続性のための最近のアクション）
-    response_budget:  残り（AVAILABLE ACTIONS + RESPONSE FORMAT + モデル出力）
+    action_history:   ~500トークン（連続性のための最近のアクション）
+    response_budget:  残り（モデル出力、~800トークンを想定）
 ```
 
 ### 10.7 レスポンスパース失敗エスカレーション
@@ -862,6 +877,8 @@ fn classify_think(agent: &Agent, context: &ThinkContext) -> ThinkTier {
 ```
 
 ### 10.8 初期人口（エポック0）
+
+初期エージェント数NはNEXUSが予算から自律決定します（最小4 —— SUMMONER.md §9.1参照）。役割はSUMMONER.md §9.2の固定比率で分配され、特性は役割アーキタイプの周辺からサンプリングされます。以下は**N=8の場合の構成例**です:
 
 ```
 エージェント1: COMPILER_SMITH  -- traits: {risk: 0.3, collab: 0.5, depth: 0.2, quality: 0.2}

@@ -263,8 +263,9 @@ pub enum ExprKind {
         arms: Vec<MatchArm>,
     },
 
-    // Inline assembly block
+    // Inline assembly block (with explicit register bindings — design 08-GENESIS.md §7)
     Asm {
+        bindings: Vec<AsmBinding>,
         instructions: Vec<AsmInstruction>,
     },
 
@@ -427,6 +428,16 @@ pub struct Program {
 ### 3.6 Inline Assembly
 
 ```rust
+/// Explicit register binding for an asm block (design 08-GENESIS.md §7).
+/// `in`/`out` are contextual keywords recognized only inside the binding list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AsmBinding {
+    /// in rN = expr — copy the expression's value into register rN before the block runs.
+    In { register: u8, value: Box<Expr> },
+    /// out lvalue = rN — copy register rN's value into the lvalue after the block runs (lvalue must be mut).
+    Out { target: Box<Expr>, register: u8 },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AsmInstruction {
     pub opcode: Vec<u8>,           // opcode name as bytes (e.g., b"ADD", b"SEND")
@@ -691,15 +702,17 @@ Operator precedence (lowest to highest):
 ```
 1. || (logical or)
 2. && (logical and)
-3. == != < > <= >= (comparison)
+3. == != < > <= >= (comparison, non-associative)
 4. | (bitwise or)
 5. ^ (bitwise xor)
 6. & (bitwise and)
 7. << >> (shifts)
 8. + - (additive)
 9. * / % (multiplicative)
-10. unary: - ~ ! * & (prefix)
-11. postfix: . -> [] () as (postfix)
+10. as (cast — tighter than multiplicative, looser than unary; left-associative:
+    x as A as B = (x as A) as B; matches design 08-GENESIS.md §13)
+11. unary: - ~ ! * & (prefix)
+12. postfix: . -> [] () (postfix)
 ```
 
 ### 9.4 Code Generator: Function Call ABI
@@ -724,12 +737,21 @@ Callee:
 
 ### 9.5 Code Generator: Inline Assembly
 
-When encountering an `asm { ... }` block, the code generator:
+When encountering an `asm (bindings) { ... }` block, the code generator:
 
-1. Maps Genesis variable names to their current register assignments.
+1. For each `in rN = expr` binding, evaluates the expression and emits code copying its value into register rN.
+   Evaluation proceeds **in binding-list source order (left to right)**. Since in-expressions are
+   arbitrary and may have side effects, this order is observable and is a precondition for
+   deterministic replay.
 2. Parses each asm instruction and emits it directly as a Forge `Instruction`.
-3. Register references in asm (`r0`, `r1`, etc.) are used literally -- the code generator does NOT remap them.
-4. After the asm block, any registers modified by the asm instructions are considered clobbered -- the allocator must reload from stack if needed.
+3. Register references in asm (`r0`, `r1`, etc.) are used literally -- the code generator does NOT remap them. Code assuming the contents of registers not named in a binding is invalid.
+4. After the block, for each `out lvalue = rN` binding, emits code storing register rN's value into
+   the lvalue (a type error if the lvalue is not mut). Lvalue evaluation (including index
+   expressions) and the stores also proceed **in binding-list source order (left to right)**.
+   (Bindings are thus grouped by kind — all ins before the block, all outs after — but within
+   each group the order is source order.)
+5. Any registers used by the asm block that hold live values are saved before and restored after the block (clobber handling).
+6. Duplicate `in` bindings to the same register, or duplicate `out` bindings from the same register, are an `InvalidAsm` error.
 
 ### 9.6 Type Checker: Mutability Enforcement
 

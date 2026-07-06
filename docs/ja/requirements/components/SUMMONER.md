@@ -190,6 +190,8 @@ pub struct ModelInfo {
     pub max_context: u32,
     /// 100万入力トークンごとのUSD。
     pub input_cost: f64,
+    /// キャッシュ済み入力100万トークンごとのUSD（プロバイダーが未対応ならinput_costと同値）。
+    pub cached_input_cost: f64,
     /// 100万出力トークンごとのUSD。
     pub output_cost: f64,
     /// 能力ティア（価格によって分類）。
@@ -516,12 +518,15 @@ fn plan_civilization(budget_usd: f64, models: Vec<ModelInfo>, rate_limits: Vec<R
     agent_budget = budget_usd * 0.90
 
     // ステップ1: サイクルごとのエージェントごとのコストを推定
-    //   1サイクル = ~10 think呼び出し（平均）
-    //   1 think = ~2000入力トークン + ~500出力トークン
+    //   1サイクル = ~8 think呼び出し（バッチthinkモデル: 64 tick ≈ 8 think + 56アクションtick
+    //   — デザイン 09-AGENT.md §4.1参照）
+    //   1 think = ~7000入力トークン（うち~5000はプロンプトキャッシュ対象の安定プレフィックス）
+    //           + ~800出力トークン
     avg_model = select_representative_model(models, ThinkTier::Tier2)
-    cost_per_think = (2000 * avg_model.input_cost / 1_000_000)
-                   + (500 * avg_model.output_cost / 1_000_000)
-    cost_per_agent_per_cycle = cost_per_think * 10
+    cost_per_think = (5000 * avg_model.cached_input_cost / 1_000_000)
+                   + (2000 * avg_model.input_cost / 1_000_000)
+                   + (800 * avg_model.output_cost / 1_000_000)
+    cost_per_agent_per_cycle = cost_per_think * 8
 
     // ステップ2: 持続可能なサイクル数を決定
     min_cycles = 100
@@ -531,12 +536,15 @@ fn plan_civilization(budget_usd: f64, models: Vec<ModelInfo>, rate_limits: Vec<R
     max_agents_ideal = floor(agent_budget / (ideal_cycles * cost_per_agent_per_cycle))
     max_agents_min = floor(agent_budget / (min_cycles * cost_per_agent_per_cycle))
     max_agents_rate = compute_max_from_rate_limits(rate_limits)
-    agent_count = clamp(max_agents_ideal, 4, max_agents_rate)
 
-    // ステップ4: 理想時に予算が4エージェントに不足している場合、より安いモデルを試す
-    if agent_count < 4:
-        TIER_2/TIER_3モデルのみで再試行
-        それでも < 4の場合: エラーを返す（予算が低すぎる）
+    // ステップ4: 予算が4エージェントに不足している場合、より安いモデルを試す
+    //   （クランプ後ではagent_countは常に4以上になるため、クランプ前に
+    //     max_agents_minで判定する）
+    if max_agents_min < 4:
+        TIER_2/TIER_3モデルのみでステップ1から再試行
+        それでも max_agents_min < 4 の場合: エラーを返す（予算が低すぎる）
+
+    agent_count = clamp(max_agents_ideal, 4, max_agents_rate)
 
     // ステップ5: ロールを配分
     roles = distribute_roles(agent_count)

@@ -53,14 +53,21 @@ chrono = { workspace = true }
 ### 3.1 定数
 
 ```rust
-/// ジェネシス時の初期総供給量。
-pub const INITIAL_SUPPLY: u64 = 10_000;
-
 /// MINT_0が保有する財務省準備金。
 pub const TREASURY_RESERVE: u64 = 5_000;
 
 /// 新しくスポーンされた各エージェントに与えられる助成金。
 pub const AGENT_INITIAL_GRANT: u64 = 100;
+
+/// 初期エージェント1体あたりのスポーン助成金用リザーブ。
+/// （エポックインフレは新規発行であり、このリザーブからは支出されない — デザイン 06-MINT.md §2.1）
+pub const SPAWN_RESERVE_PER_AGENT: u64 = 500;
+
+/// ジェネシス時の初期総供給量。初期エージェント数Nに応じてスケールする
+/// （デザイン 06-MINT.md §2.1。例: N=8 → 9,800）。
+pub fn initial_supply(n_agents: u64) -> u64 {
+    TREASURY_RESERVE + (AGENT_INITIAL_GRANT + SPAWN_RESERVE_PER_AGENT) * n_agents
+}
 
 /// インフレ率: エポックごとに財務省に鋳造される新しいSpark（分数）。
 pub const INFLATION_RATE_NUM: u64 = 2;
@@ -75,6 +82,17 @@ pub const TAX_MINIMUM: u64 = 1;
 pub const BANKRUPTCY_WARNING_CYCLES: u64 = 3;     // サイクル1-3: 50%予算
 pub const BANKRUPTCY_SEVERE_CYCLE: u64 = 4;        // サイクル4: 25%予算
 pub const BANKRUPTCY_DEAD_CYCLE: u64 = 5;          // サイクル5: エージェントDEAD
+/// 若齢保護: 生成からこのサイクル数未満のエージェントは破産でDEADにならず
+/// DORMANTに遷移する（デザイン 06-MINT.md §2.3）。
+pub const BANKRUPTCY_GRACE_CYCLES: u64 = 20;
+
+/// ファーミング耐性（デザイン 06-MINT.md §5.3）。
+pub const REVIEW_REWARD_CAP_PER_CYCLE: u32 = 3;
+pub const BUG_REPORT_CAP_PER_CYCLE: u32 = 3;
+pub const ORACLE_VERIFY_CAP_PER_CYCLE: u32 = 3;
+pub const VERIFIER_MIN_REPUTATION: f32 = 0.4;
+pub const MUTUAL_PAIR_DECAY: f32 = 0.5;            // k回目の相互報酬 = 基本額 × 0.5^(k-1)
+pub const OVERTURNED_REVIEW_SLASH_MULTIPLIER: u64 = 2;
 
 /// ステーキング結果。
 pub const STAKE_WIN_BONUS_PERCENT: u64 = 10;       // 財務省から+10%
@@ -101,6 +119,7 @@ pub struct Account {
     pub total_earned: u64,     // 生涯獲得（単調増加）
     pub total_spent: u64,      // 生涯支出（単調増加）
     pub created_at: u64,       // アカウント作成時のティック
+    pub debt_frozen: bool,     // 若齢保護により債務凍結中（凍結中は破産カウンター停止 —— デザイン 06-MINT.md §2.3）
 }
 ```
 
@@ -205,6 +224,9 @@ pub struct EconomicReport {
     pub top_earners: Vec<(AgentId, u64)>, // このサイクルの獲得トップ3
     pub bounties_completed: u32,
     pub bounties_open: u32,
+    pub reciprocity_index: f32,      // トレジャリー支払いのうち相互ペア間に集中している割合
+                                     // （ファーミング検出指標 — デザイン 06-MINT.md §5.3が
+                                     //   §3.1上限の自律調整の入力として使用）
 }
 ```
 
@@ -235,12 +257,18 @@ pub struct Intervention {
 
 ```rust
 /// 財務省から支払われる標準報酬額。
+/// すべて§3.1のファーミング耐性定数（支払い上限、相互ペア逓減、遡及スラッシュ）の
+/// 適用対象（デザイン 06-MINT.md §5.3）。
 pub mod rewards {
     pub const CODE_REVIEW: u64 = 5;              // 承認されたレビューごと
-    pub const ORACLE_ENTRY: u64 = 10;            // 検証されたエントリごと（2+検証者）
-    pub const DEPENDENCY_ROYALTY: u64 = 1;        // エポックごとのユニーク依存者ごと
-    pub const BUG_REPORT: u64 = 3;               // 確認されたバグレポートごと
-    pub const GOVERNANCE_VOTE: u64 = 1;           // 投票実施ごと
+                                                 // （バウンティ提出物または正式なReviewRequestに紐づくもののみ、
+                                                 //   REVIEW_REWARD_CAP_PER_CYCLE件/サイクルまで）
+    pub const ORACLE_ENTRY: u64 = 10;            // 検証されたエントリごと
+                                                 // （検証者はレピュテーション >= VERIFIER_MIN_REPUTATIONの2+体）
+    pub const DEPENDENCY_ROYALTY: u64 = 1;        // エポックごとの適格依存者ごと
+                                                 // （適格 = 別オーナーかつ当該エポック内にForge実行実績あり）
+    pub const BUG_REPORT: u64 = 3;               // 確認されたバグレポートごと（BUG_REPORT_CAP_PER_CYCLE件まで）
+    pub const GOVERNANCE_VOTE: u64 = 1;           // 投票実施ごと（定足数に到達した提案のみ支払い対象）
 }
 ```
 
@@ -260,6 +288,7 @@ CREATE TABLE mint.accounts (
     locked          BIGINT NOT NULL DEFAULT 0,   -- CHECK (locked >= 0)
     total_earned    BIGINT NOT NULL DEFAULT 0,   -- CHECK (total_earned >= 0)
     total_spent     BIGINT NOT NULL DEFAULT 0,   -- CHECK (total_spent >= 0)
+    debt_frozen     BOOLEAN NOT NULL DEFAULT FALSE, -- 若齢保護による債務凍結（デザイン 06-MINT.md §2.3）
     created_at      BIGINT NOT NULL,             -- ティック
     bankruptcy_cycles SMALLINT NOT NULL DEFAULT 0,
     CONSTRAINT locked_non_negative CHECK (locked >= 0),
@@ -338,6 +367,7 @@ CREATE TABLE mint.economic_reports (
     top_earners         BYTEA NOT NULL,          -- MessagePackエンコードされたVec<(AgentId, u64)>
     bounties_completed  INTEGER NOT NULL,
     bounties_open       INTEGER NOT NULL,
+    reciprocity_index   REAL NOT NULL,           -- ファーミング検出指標（デザイン 06-MINT.md §5.3）
     created_at          BIGINT NOT NULL
 );
 ```
@@ -389,6 +419,14 @@ pub trait MintLedger: Send + Sync {
     /// マイナス残高のすべてのエージェントの破産チェックを処理。
     async fn process_bankruptcy(&self, cycle: u64) -> Result<Vec<AgentId>, MintError>;
 
+    /// 若齢保護のグレースピリオド中、破産エージェントのマイナス残高を凍結する
+    /// （デザイン 06-MINT.md §2.3）。凍結中は破産サイクルカウンターが進まない。
+    /// トレジャリー助成金または他エージェントの出資による再アクティブ化で解凍される。
+    async fn freeze_debt(&self, agent_id: AgentId) -> Result<(), MintError>;
+
+    /// エージェントの債務が凍結中かどうかを返す（Account.debt_frozenの参照）。
+    async fn is_debt_frozen(&self, agent_id: AgentId) -> Result<bool, MintError>;
+
     /// 期限超過エスクローを失効（期限後に自動返金）。
     async fn expire_escrows(&self, current_tick: u64) -> Result<u32, MintError>;
 }
@@ -431,6 +469,7 @@ pub trait MintLedger: Send + Sync {
 | `0x5040` | `BANKRUPTCY_WARNING` | `{ agent: AgentId, cycle: u64, balance: i64 }` | エージェントマイナス残高検出 |
 | `0x5041` | `BANKRUPTCY_SEVERE` | `{ agent: AgentId, cycle: u64, budget_reduction_pct: u64 }` | サイクル4深刻な削減 |
 | `0x5042` | `AGENT_BANKRUPT_DEAD` | `{ agent: AgentId, assets_to_treasury: u64 }` | サイクル5エージェントDEAD |
+| `0x5043` | `AGENT_BANKRUPT_GRACE` | `{ agent: AgentId, frozen_debt: i64 }` | 若齢保護によるDORMANT遷移+債務凍結（デザイン 06-MINT.md §2.3） |
 | `0x5050` | `INTERVENTION_PROPOSED` | `Intervention { kind, reason }` | 経済介入が必要 |
 
 ---
@@ -538,15 +577,26 @@ fn gini(balances: Vec<i64>) -> f32:
 fn process_bankruptcy(cycle: u64) -> Vec<AgentId>:
     dead_agents = []
     for account in SELECT * FROM mint.accounts WHERE balance < 0:
+        if account.debt_frozen:
+            continue    -- 凍結中は破産カウンターを進めない（若齢保護 — §3.1）
         account.bankruptcy_cycles += 1
         match account.bankruptcy_cycles:
             1..=3 => emit BANKRUPTCY_WARNING（50%ティック予算削減）
             4     => emit BANKRUPTCY_SEVERE（25%ティック予算削減）
             5     => {
-                emit AGENT_BANKRUPT_DEAD
-                残りのロックされた資金を財務省に送金
-                Nexus経由でエージェントをDEADとマーク
-                dead_agents.push(account.owner)
+                agent_age_cycles = cycle - nexus.spawn_cycle(account.owner)
+                if agent_age_cycles < BANKRUPTCY_GRACE_CYCLES {
+                    -- 若齢保護（デザイン 06-MINT.md §2.3）:
+                    -- DEADではなくDORMANTに遷移し、債務を凍結する
+                    emit AGENT_BANKRUPT_GRACE
+                    freeze_debt(account.owner)
+                    Nexus経由でエージェントをDORMANTとマーク
+                } else {
+                    emit AGENT_BANKRUPT_DEAD
+                    残りのロックされた資金を財務省に送金
+                    Nexus経由でエージェントをDEADとマーク
+                    dead_agents.push(account.owner)
+                }
             }
     -- 回復したエージェントのカウンターをリセット
     UPDATE mint.accounts SET bankruptcy_cycles = 0 WHERE balance >= 0 AND bankruptcy_cycles > 0
