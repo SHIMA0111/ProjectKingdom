@@ -92,6 +92,9 @@ pub struct ForgeMachine {
     // --- メモリ ---
     pub memory: Vec<u8>,
     pub heap_start: u64,
+    pub heap_end: u64,     // ヒープ/スタック境界（サンドボックス作成時に固定）。
+                           // スタックはstack_startから下方向に伸び、[heap_end..stack_start]内に
+                           // 留まらなければならない（§9.2）
     pub stack_start: u64,
 
     // --- 計測 ---
@@ -505,7 +508,7 @@ fn run(machine: &mut ForgeMachine) -> ExecResult:
             LOAD => bounds_check(addr); rd = memory[addr]
             PUSH => if sp < heap_end { fault(StackOverflow) }; sp -= 8; write(sp, rs1)
             POP  => if sp >= stack_start { fault(StackUnderflow) }; rd = read(sp); sp += 8
-            CALL => push(pc + instr_size); pc = addr; continue
+            CALL => push(pc + instruction_size(instr)); pc = addr; continue
             RET  => pc = pop(); continue
             SEND => enqueue(channel, &memory[rs1..rs1+len])
             RECV => if channel_empty { machine.state = Blocked; break } else { dequeue_into(rd, maxlen) }

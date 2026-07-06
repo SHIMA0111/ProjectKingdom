@@ -64,6 +64,7 @@ CREATE TABLE oracle.entries (
     author_id       BYTEA NOT NULL,             -- 元の著者のagent_id
     contributors    BYTEA[] NOT NULL DEFAULT '{}', -- agent_idの配列
     created_at_tick BIGINT NOT NULL,
+    created_at_cycle BIGINT NOT NULL,           -- 作成サイクル（Deduplicatorのサイクル単位クエリに使用 — §9.7）
     updated_at_tick BIGINT NOT NULL,
     updated_at_cycle BIGINT NOT NULL,           -- サイクルは可変tick長のため、経過サイクル計算にはこちらを使う
 
@@ -250,6 +251,7 @@ pub struct OracleEntry {
     pub author: AgentId,
     pub contributors: Vec<AgentId>,
     pub created_at_tick: u64,
+    pub created_at_cycle: u64,
     pub updated_at_tick: u64,
     pub updated_at_cycle: u64,
 
@@ -762,6 +764,8 @@ seed_genesis(genesis_spec_body):
 ```
 entry_publish(entry, review_mode):
     entry.id = sha256(entry.kind || entry.title || entry.author || entry.created_at_tick)
+    entry.created_at_cycle = current_cycle
+    entry.updated_at_cycle = current_cycle
 
     match review_mode:
         Immediate:

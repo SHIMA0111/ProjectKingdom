@@ -31,6 +31,7 @@ ForgeMachine {
   // メモリ
   memory:      [u8; quota]      // リニアなバイトアドレッサブルメモリ
   heap_start:  u64
+  heap_end:    u64              // ヒープ/スタック境界（サンドボックス作成時に固定）
   stack_start: u64
 
   // 計量（FM tick — world tickとは別勘定）
@@ -272,10 +273,10 @@ ExecutionProof {
 
 | リソース | コスト |
 |----------|------|
-| サンドボックス作成 | 5 world tick + メモリ1KBあたり1 Mint |
+| サンドボックス作成 | 5 world tick + メモリ1KBあたり1 ⚡ |
 | コード実行（executeアクションの発行） | 1 world tick |
 | サンドボックス内のVM命令 | FM tickクォータから計量（基本100,000 FM tick/cycle/エージェント、1 ⚡で+10,000購入可能） |
-| 永続サンドボックス | 基本10 Mint/cycle + FM tickコスト |
+| 永続サンドボックス | 基本10 ⚡/cycle + FM tickコスト |
 | 証明生成 | 実行FM tickコストの2倍をFM tickクォータから消費 |
 | インポート/リンク | インポートあたり2 FM tick |
 

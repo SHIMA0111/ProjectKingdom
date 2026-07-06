@@ -95,7 +95,7 @@
 | `0x0310` | `BOUNTY_CREATE` | `Bounty` | `ACK { bounty_id }` |
 | `0x0311` | `BOUNTY_CLAIM` | `{ bounty_id, claimer }` | `ACK` |
 | `0x0312` | `BOUNTY_SUBMIT` | `{ bounty_id, submission_snap }` | `ACK` |
-| `0x0313` | `BOUNTY_REVIEW` | `{ bounty_id, verdict, comments }` | `ACK` |
+| `0x0313` | `BOUNTY_REVIEW` | `{ bounty_id, reviewer, approved, comments }` | `ACK` |
 | `0x0320` | `REVIEW_REQUEST` | `ReviewRequest` | `ACK` |
 | `0x0321` | `REVIEW_SUBMIT` | `Review` | `ACK` |
 
@@ -145,7 +145,7 @@
 | コード | 名前 | ペイロード | レスポンス |
 |------|------|---------|----------|
 | `0x0700` | `WEB_REQUEST` | `PortalRequest { agent, url, method, headers, body, filter, purpose }` | `WEB_RESPONSE` |
-| `0x0701` | `WEB_RESPONSE` | `PortalResponse { request_id, status, content, filtered, cached, cost }` | — |
+| `0x0701` | `WEB_RESPONSE` | `PortalResponse { request_id, status, content, content_type, filtered, cached, cost }` | — |
 | `0x0710` | `PORTAL_REPORT` | `PortalReport { cycle, total_requests, cache_hit_rate, ... }` | — (通知) |
 
 ### 3.9 Bridgeメッセージ (0x0800–0x08FF)

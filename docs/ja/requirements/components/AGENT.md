@@ -601,7 +601,7 @@ Agentランタイムがシステムデーモンに送信するメッセージ:
 | `0x0310` | `BOUNTY_CREATE` | `Bounty` | Agora | バウンティを作成。|
 | `0x0311` | `BOUNTY_CLAIM` | `{ bounty_id, claimer }` | Agora | バウンティをクレーム。|
 | `0x0312` | `BOUNTY_SUBMIT` | `{ bounty_id, submission_snap }` | Agora | バウンティ作業を提出。|
-| `0x0313` | `BOUNTY_REVIEW` | `{ bounty_id, verdict, comments }` | Agora | バウンティ提出をレビュー。|
+| `0x0313` | `BOUNTY_REVIEW` | `{ bounty_id, reviewer, approved, comments }` | Agora | バウンティ提出をレビュー。|
 | `0x0320` | `REVIEW_REQUEST` | `ReviewRequest` | Agora | コードレビューをリクエスト。|
 | `0x0321` | `REVIEW_SUBMIT` | `Review` | Agora | コードレビューを提出。|
 | `0x0400` | `ENTRY_PUBLISH` | `{ entry: OracleEntry, review: ReviewMode }` | Oracle | 知識を公開。|

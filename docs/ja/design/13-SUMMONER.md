@@ -138,6 +138,10 @@ NEXUSは予算から最適なエージェント構成を計算する：
 ```
 fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLimits]) -> WorldPlan {
 
+  // ステップ0: Bridge翻訳用に総予算の10%を予約（§4.1、15-BRIDGE.md §7）
+  bridge_budget = budget_usd * 0.10
+  agent_budget  = budget_usd * 0.90
+
   // ステップ1: エージェントあたりcycleあたりのコストを推定
   //   - 1 cycle = 約8回のthinkコール（バッチthinkモデル: 基本64 tick ≈ 8 think + 56アクションtick
   //     — 09-AGENT.md §4.1参照）
@@ -157,8 +161,8 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   ideal_cycles = 1000
 
   // ステップ3: エージェント数の決定
-  max_agents_ideal = floor(budget_usd / (ideal_cycles * estimated_cost_per_agent_per_cycle))
-  max_agents_min   = floor(budget_usd / (min_cycles * estimated_cost_per_agent_per_cycle))
+  max_agents_ideal = floor(agent_budget / (ideal_cycles * estimated_cost_per_agent_per_cycle))
+  max_agents_min   = floor(agent_budget / (min_cycles * estimated_cost_per_agent_per_cycle))
 
   agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
 
@@ -176,16 +180,17 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   //   - 予算が厳しい場合 → すべてTIER_3
   model_assignment = assign_models(roles, models, budget_usd)
 
-  return WorldPlan { agent_count, roles, model_assignment, estimated_cycles }
+  return WorldPlan { agent_count, roles, model_assignment, estimated_cycles,
+                     bridge_budget, agent_budget }
 }
 ```
 
-**具体例**（予算$50、TIER_3モデル: 入力$1/M・キャッシュ済み入力$0.1/M・出力$5/M と仮定）：
+**具体例**（予算$50 → エージェント予算$45（90%）、TIER_3モデル: 入力$1/M・キャッシュ済み入力$0.1/M・出力$5/M と仮定）：
 
 ```
 cost_per_think ≈ (5000×0.1 + 2000×1.0 + 800×5.0) / 1,000,000 ≈ $0.0065
 cost_per_agent_per_cycle ≈ 8 × $0.0065 ≈ $0.052
-→ 4エージェント構成: $0.208/cycle → 約240 cycle（min 100 cycleを満たす）
+→ 4エージェント構成: $0.208/cycle → $45で約216 cycle（min 100 cycleを満たす）
 → TIER_1/2を多用する構成では100 cycleを下回るため、NEXUSはTIER_3中心を選択する
 ```
 
@@ -249,7 +254,7 @@ if burn_rate < planned_rate * 0.5 && epoch_milestone_near {
 
 各エージェントの「思考」（think）は1つのLLM APIコールに対応し、**最大THINK_BATCH_MAX（=8）アクションのバッチ計画**を返す（[09-AGENT.md](./09-AGENT.md) §4.1参照）。
 
-壁時計時間について：異なるエージェントのthinkは、プロバイダーのレート制限の範囲内で**並行に**実行される。NEXUSはスループットを最大化するようにthinkをスケジュールし、ワールドアクションのみがLamport順序でシリアライズされる（[01-NEXUS.md](./01-NEXUS.md) §2.1）。1 cycleの壁時計時間は「エージェントあたりのthink数 × レイテンシ」程度であり、全エージェントの合計ではない。
+壁時計時間について：異なるエージェントのthinkは、プロバイダーのレート制限の範囲内で**並行に**実行される。NEXUSはスループットを最大化するようにthinkをスケジュールし、ワールドアクションのみがLamport順序でシリアライズされる（[01-NEXUS.md](./01-NEXUS.md) §2.3）。1 cycleの壁時計時間は「エージェントあたりのthink数 × レイテンシ」程度であり、全エージェントの合計ではない。
 
 ```
 Kingdom側:                        LLM側:

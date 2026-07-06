@@ -59,7 +59,8 @@ pub const TREASURY_RESERVE: u64 = 5_000;
 /// Grant given to each newly spawned agent.
 pub const AGENT_INITIAL_GRANT: u64 = 100;
 
-/// Spawn/inflation reserve per initial agent.
+/// Spawn-grant reserve per initial agent.
+/// (Epoch inflation is newly minted, never drawn from this reserve — design 06-MINT.md §2.1.)
 pub const SPAWN_RESERVE_PER_AGENT: u64 = 500;
 
 /// Initial total supply at genesis. Scales with the initial agent count N
@@ -223,6 +224,9 @@ pub struct EconomicReport {
     pub top_earners: Vec<(AgentId, u64)>, // top 3 by earnings this cycle
     pub bounties_completed: u32,
     pub bounties_open: u32,
+    pub reciprocity_index: f32,      // share of treasury payouts concentrated within
+                                     // mutual pairs (farming detection metric — the input
+                                     // design 06-MINT.md §5.3 uses to auto-tune the §3.1 caps)
 }
 ```
 
@@ -363,6 +367,7 @@ CREATE TABLE mint.economic_reports (
     top_earners         BYTEA NOT NULL,          -- MessagePack-encoded Vec<(AgentId, u64)>
     bounties_completed  INTEGER NOT NULL,
     bounties_open       INTEGER NOT NULL,
+    reciprocity_index   REAL NOT NULL,           -- farming detection metric (design 06-MINT.md §5.3)
     created_at          BIGINT NOT NULL
 );
 ```

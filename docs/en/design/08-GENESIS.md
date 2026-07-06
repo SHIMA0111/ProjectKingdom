@@ -108,7 +108,9 @@ Per the zero-ambiguity principle, the behavior of every operation is defined:
 | `+` `-` `*` | **Two's-complement wrapping** (mod 2^N, N = bit width of the type). Overflow never faults |
 | `/` `%` | Zero divisor raises the Forge fault `DIVIDE_BY_ZERO`. Signed division truncates toward zero; the remainder takes the sign of the dividend. `i64::MIN / -1` wraps to `i64::MIN` |
 | Comparison | Signed types compare signed, unsigned types compare unsigned |
+| `<<` | Logical shift left (SHL). Shift amount is `amount mod 64` |
 | `>>` | Logical shift right (SHR) for unsigned types, arithmetic shift right (SAR) for signed types. Shift amount is `amount mod 64` |
+| `~` / `!` | `~` is the bitwise complement of an integer (NOT instruction). `!` is logical NOT, on `bool` only |
 | `as` (narrowing) | Truncates to the low bits |
 | `as` (widening) | Zero-extends from unsigned types, sign-extends from signed types |
 
@@ -133,9 +135,12 @@ a + b, a - b, a * b, a / b, a % b
 // Comparison
 a == b, a != b, a < b, a > b, a <= b, a >= b
 
+// Bitwise
+a & b, a | b, a ^ b, ~a     // AND / OR / XOR / bitwise complement (NOT instruction)
+a << b, a >> b               // shifts (see §4.4 for behavior)
+
 // Logical
-a & b, a | b, a ^ b, !a     // bitwise
-a << b, a >> b               // shifts (see §4.4 for >> behavior)
+!a                           // logical NOT (bool only)
 a && b, a || b               // short-circuit boolean (syntactic sugar)
 
 // Pointer operations
@@ -474,6 +479,7 @@ asm_operand    = REGISTER | INTEGER | IDENT ;                (* register / immed
 MNEMONIC       = IDENT ;   (* one of the Forge mnemonics — the instruction set of
                               05-FORGE.md §2.2. Unknown mnemonics are a compile error *)
 REGISTER       = "r" DIGIT { DIGIT } ;                       (* r0 – r255 *)
+DIGIT          = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
 (* "in"/"out" are contextual keywords recognized only inside the binding list *)
 
 (* ── Expressions (see the precedence table below) ── *)
@@ -485,16 +491,16 @@ pattern        = "_" | INTEGER | "true" | "false"
                | IDENT [ "(" IDENT { "," IDENT } ")" ] ;     (* enum variant binding *)
 
 or_expr        = and_expr { "||" and_expr } ;
-and_expr       = bitor_expr { "&&" bitor_expr } ;
+and_expr       = cmp_expr { "&&" cmp_expr } ;
+cmp_expr       = bitor_expr [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) bitor_expr ] ;
 bitor_expr     = bitxor_expr { "|" bitxor_expr } ;
 bitxor_expr    = bitand_expr { "^" bitand_expr } ;
-bitand_expr    = cmp_expr { "&" cmp_expr } ;
-cmp_expr       = shift_expr [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) shift_expr ] ;
+bitand_expr    = shift_expr { "&" shift_expr } ;
 shift_expr     = add_expr { ( "<<" | ">>" ) add_expr } ;
 add_expr       = mul_expr { ( "+" | "-" ) mul_expr } ;
 mul_expr       = cast_expr { ( "*" | "/" | "%" ) cast_expr } ;
 cast_expr      = unary { "as" type } ;
-unary          = ( "!" | "-" | "*" | "&" ) unary | postfix ;
+unary          = ( "!" | "-" | "*" | "&" | "~" ) unary | postfix ;
 postfix        = primary { "(" [ expression { "," expression } ] ")"   (* call *)
                          | "[" expression "]"                          (* index *)
                          | "." IDENT                                   (* field *)
@@ -504,6 +510,6 @@ primary        = INTEGER | BYTE | STRING | "true" | "false"
                | "[" expression ";" INTEGER "]" ;                      (* array initializer *)
 ```
 
-**Operator precedence** (highest first): postfix (call/index/field) > unary (`!` `-` `*` `&`) > `as` > `*` `/` `%` > `+` `-` > `<<` `>>` > comparison > `&` > `^` > `|` > `&&` > `||`. Same-precedence operators are left-associative (`as` and unary are the right-associative exceptions).
+**Operator precedence** (highest first): postfix (call/index/field) > unary (`!` `-` `*` `&` `~`) > `as` > `*` `/` `%` > `+` `-` > `<<` `>>` > `&` > `^` > `|` > comparison > `&&` > `||`. Same-precedence operators are left-associative (`as` and unary are the right-associative exceptions). Note that bitwise operators bind tighter than comparison: `a & b == c` parses as `(a & b) == c` (Genesis does not inherit C's historical precedence mistake).
 
 Comparison operators are **non-associative**: `a < b < c` is a syntax error.

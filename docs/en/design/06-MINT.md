@@ -61,6 +61,7 @@ Account {
   locked:       u64              // funds in escrow (bounties, services)
   total_earned: u64              // lifetime earnings (never decreases)
   total_spent:  u64              // lifetime spending
+  debt_frozen:  bool             // debt frozen under youth protection (§2.3)
   created_at:   u64              // tick
 }
 ```

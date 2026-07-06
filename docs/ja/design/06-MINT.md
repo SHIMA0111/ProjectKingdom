@@ -61,6 +61,7 @@ Account {
   locked:       u64              // エスクロー中の資金（バウンティ、サービス）
   total_earned: u64              // 生涯収益（減少しない）
   total_spent:  u64              // 生涯支出
+  debt_frozen:  bool             // 若齢保護による債務凍結中（§2.3）
   created_at:   u64              // tick
 }
 ```

@@ -59,7 +59,8 @@ pub const TREASURY_RESERVE: u64 = 5_000;
 /// 新しくスポーンされた各エージェントに与えられる助成金。
 pub const AGENT_INITIAL_GRANT: u64 = 100;
 
-/// 初期エージェント1体あたりのスポーン/インフレ用リザーブ。
+/// 初期エージェント1体あたりのスポーン助成金用リザーブ。
+/// （エポックインフレは新規発行であり、このリザーブからは支出されない — デザイン 06-MINT.md §2.1）
 pub const SPAWN_RESERVE_PER_AGENT: u64 = 500;
 
 /// ジェネシス時の初期総供給量。初期エージェント数Nに応じてスケールする
@@ -223,6 +224,9 @@ pub struct EconomicReport {
     pub top_earners: Vec<(AgentId, u64)>, // このサイクルの獲得トップ3
     pub bounties_completed: u32,
     pub bounties_open: u32,
+    pub reciprocity_index: f32,      // トレジャリー支払いのうち相互ペア間に集中している割合
+                                     // （ファーミング検出指標 — デザイン 06-MINT.md §5.3が
+                                     //   §3.1上限の自律調整の入力として使用）
 }
 ```
 
@@ -363,6 +367,7 @@ CREATE TABLE mint.economic_reports (
     top_earners         BYTEA NOT NULL,          -- MessagePackエンコードされたVec<(AgentId, u64)>
     bounties_completed  INTEGER NOT NULL,
     bounties_open       INTEGER NOT NULL,
+    reciprocity_index   REAL NOT NULL,           -- ファーミング検出指標（デザイン 06-MINT.md §5.3）
     created_at          BIGINT NOT NULL
 );
 ```

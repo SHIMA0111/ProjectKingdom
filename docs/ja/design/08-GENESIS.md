@@ -108,7 +108,9 @@ enum Name {
 | `+` `-` `*` | **2の補数でラップする**（mod 2^N、Nは型のビット幅）。オーバーフローはフォールトしない |
 | `/` `%` | ゼロ除数はForgeフォールト`DIVIDE_BY_ZERO`。符号付き除算は0方向へ切り捨て、剰余の符号は被除数に従う。`i64::MIN / -1`はラップして`i64::MIN` |
 | 比較 | 符号付き型は符号付き比較、符号なし型は符号なし比較 |
+| `<<` | 論理左シフト（SHL）。シフト量は`量 mod 64` |
 | `>>` | 符号なし型は論理右シフト（SHR）、符号付き型は算術右シフト（SAR）。シフト量は`量 mod 64` |
+| `~` / `!` | `~`は整数のビット反転（NOT命令）。`!`は`bool`専用の論理NOT |
 | `as`（縮小） | 下位ビットの切り捨て |
 | `as`（拡大） | 符号なし型からはゼロ拡張、符号付き型からは符号拡張 |
 
@@ -133,9 +135,12 @@ a + b, a - b, a * b, a / b, a % b
 // 比較
 a == b, a != b, a < b, a > b, a <= b, a >= b
 
+// ビット演算
+a & b, a | b, a ^ b, ~a     // AND / OR / XOR / ビット反転（NOT命令）
+a << b, a >> b               // シフト（動作は§4.4参照）
+
 // 論理
-a & b, a | b, a ^ b, !a     // ビット演算
-a << b, a >> b               // シフト（>>の動作は§4.4参照）
+!a                           // 論理NOT（boolのみ）
 a && b, a || b               // 短絡ブール（構文糖衣）
 
 // ポインタ操作
@@ -473,6 +478,7 @@ asm_operand    = REGISTER | INTEGER | IDENT ;                (* レジスタ / �
 MNEMONIC       = IDENT ;   (* Forgeニーモニックのいずれか — 05-FORGE.md §2.2の命令セット。
                               未知のニーモニックはコンパイルエラー *)
 REGISTER       = "r" DIGIT { DIGIT } ;                       (* r0 〜 r255 *)
+DIGIT          = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
 (* "in"/"out"は束縛リスト内でのみ認識される文脈キーワード *)
 
 (* ── 式（優先順位は下の表を参照）── *)
@@ -484,16 +490,16 @@ pattern        = "_" | INTEGER | "true" | "false"
                | IDENT [ "(" IDENT { "," IDENT } ")" ] ;     (* enumバリアント束縛 *)
 
 or_expr        = and_expr { "||" and_expr } ;
-and_expr       = bitor_expr { "&&" bitor_expr } ;
+and_expr       = cmp_expr { "&&" cmp_expr } ;
+cmp_expr       = bitor_expr [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) bitor_expr ] ;
 bitor_expr     = bitxor_expr { "|" bitxor_expr } ;
 bitxor_expr    = bitand_expr { "^" bitand_expr } ;
-bitand_expr    = cmp_expr { "&" cmp_expr } ;
-cmp_expr       = shift_expr [ ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) shift_expr ] ;
+bitand_expr    = shift_expr { "&" shift_expr } ;
 shift_expr     = add_expr { ( "<<" | ">>" ) add_expr } ;
 add_expr       = mul_expr { ( "+" | "-" ) mul_expr } ;
 mul_expr       = cast_expr { ( "*" | "/" | "%" ) cast_expr } ;
 cast_expr      = unary { "as" type } ;
-unary          = ( "!" | "-" | "*" | "&" ) unary | postfix ;
+unary          = ( "!" | "-" | "*" | "&" | "~" ) unary | postfix ;
 postfix        = primary { "(" [ expression { "," expression } ] ")"   (* 呼び出し *)
                          | "[" expression "]"                          (* 添字 *)
                          | "." IDENT                                   (* フィールド *)
@@ -503,6 +509,6 @@ primary        = INTEGER | BYTE | STRING | "true" | "false"
                | "[" expression ";" INTEGER "]" ;                      (* 配列初期化 *)
 ```
 
-**演算子優先順位**（高い順）：後置（呼び出し/添字/フィールド） > 単項（`!` `-` `*` `&`） > `as` > `*` `/` `%` > `+` `-` > `<<` `>>` > 比較 > `&` > `^` > `|` > `&&` > `||`。同一優先順位は左結合（`as`と単項は例外的に右結合）。
+**演算子優先順位**（高い順）：後置（呼び出し/添字/フィールド） > 単項（`!` `-` `*` `&` `~`） > `as` > `*` `/` `%` > `+` `-` > `<<` `>>` > `&` > `^` > `|` > 比較 > `&&` > `||`。同一優先順位は左結合（`as`と単項は例外的に右結合）。ビット演算が比較より強く結合する点に注意：`a & b == c`は`(a & b) == c`と解析される（Cの歴史的な優先順位バグを踏襲しない）。
 
 比較演算子は**非結合**である：`a < b < c`は構文エラー。

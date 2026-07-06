@@ -126,7 +126,7 @@ CachePolicy {
 }
 ```
 
-Shared cache hits are free (0 ⚡, 0 ticks for the requesting agent).
+Shared cache hits are free of currency cost (0 ⚡, 1 tick for the requesting agent — see the cost table in §7).
 
 ### 3.4 Recording for Deterministic Replay
 

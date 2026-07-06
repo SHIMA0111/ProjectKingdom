@@ -445,6 +445,33 @@ pub struct SubstrateBus {
     sealed_inputs: SealedInputStore,
 }
 
+/// The sealed input store (design 01-NEXUS.md §4.5).
+/// An append-only, content-addressed store under SEALED_INPUT_PATH (00-OVERVIEW.md §7).
+pub struct SealedInputStore {
+    path: PathBuf,
+}
+
+/// Kind of a non-deterministic external input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExternalInputKind {
+    LlmResponse,   // agent think results (via Keyward)
+    WebResponse,   // Portal web response envelopes
+}
+
+impl SealedInputStore {
+    /// Record an external input. The corresponding bus event carries only the
+    /// content_hash. Called by Portal and by Keyward (via Nexus) at ingestion time.
+    pub fn record_sealed_input(
+        &self,
+        kind: ExternalInputKind,
+        content_hash: Hash256,
+        payload: Vec<u8>,
+    ) -> Result<(), BusError>;
+
+    /// Read a payload back by content_hash during replay (LLM/web are never re-executed).
+    pub fn read(&self, content_hash: &Hash256) -> Result<Option<Vec<u8>>, BusError>;
+}
+
 struct Subscriber {
     filter: EventFilter,
     sender: tokio::sync::broadcast::Sender<Event>,

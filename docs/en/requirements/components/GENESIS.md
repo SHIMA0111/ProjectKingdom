@@ -702,15 +702,16 @@ Operator precedence (lowest to highest):
 ```
 1. || (logical or)
 2. && (logical and)
-3. == != < > <= >= (comparison)
+3. == != < > <= >= (comparison, non-associative)
 4. | (bitwise or)
 5. ^ (bitwise xor)
 6. & (bitwise and)
 7. << >> (shifts)
 8. + - (additive)
 9. * / % (multiplicative)
-10. unary: - ~ ! * & (prefix)
-11. postfix: . -> [] () as (postfix)
+10. as (cast — tighter than multiplicative, looser than unary; matches design 08-GENESIS.md §13)
+11. unary: - ~ ! * & (prefix)
+12. postfix: . -> [] () (postfix)
 ```
 
 ### 9.4 Code Generator: Function Call ABI

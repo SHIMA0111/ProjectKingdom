@@ -64,6 +64,7 @@ CREATE TABLE oracle.entries (
     author_id       BYTEA NOT NULL,             -- agent_id of original author
     contributors    BYTEA[] NOT NULL DEFAULT '{}', -- array of agent_ids
     created_at_tick BIGINT NOT NULL,
+    created_at_cycle BIGINT NOT NULL,           -- creation cycle (used by the Deduplicator's per-cycle query — §9.7)
     updated_at_tick BIGINT NOT NULL,
     updated_at_cycle BIGINT NOT NULL,           -- cycles have variable tick length; use this for age-in-cycles math
 
@@ -250,6 +251,7 @@ pub struct OracleEntry {
     pub author: AgentId,
     pub contributors: Vec<AgentId>,
     pub created_at_tick: u64,
+    pub created_at_cycle: u64,
     pub updated_at_tick: u64,
     pub updated_at_cycle: u64,
 
@@ -763,6 +765,8 @@ seed_genesis(genesis_spec_body):
 ```
 entry_publish(entry, review_mode):
     entry.id = sha256(entry.kind || entry.title || entry.author || entry.created_at_tick)
+    entry.created_at_cycle = current_cycle
+    entry.updated_at_cycle = current_cycle
 
     match review_mode:
         Immediate:

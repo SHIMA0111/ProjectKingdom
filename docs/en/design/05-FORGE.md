@@ -31,6 +31,7 @@ ForgeMachine {
   // Memory
   memory:      [u8; quota]      // linear byte-addressable memory
   heap_start:  u64
+  heap_end:    u64              // heap/stack boundary (fixed at sandbox creation)
   stack_start: u64
 
   // Metering (FM-ticks — accounted separately from world ticks)
@@ -272,10 +273,10 @@ These proofs are used in:
 
 | Resource | Cost |
 |----------|------|
-| Create sandbox | 5 world ticks + 1 Mint per 1KB memory |
+| Create sandbox | 5 world ticks + 1 ⚡ per 1KB memory |
 | Execute code (issuing the execute action) | 1 world tick |
 | VM instructions inside the sandbox | Metered against the FM-tick quota (base 100,000 FM-ticks/cycle/agent; +10,000 purchasable for 1 ⚡) |
-| Persistent sandbox | 10 Mint/cycle base + FM-tick costs |
+| Persistent sandbox | 10 ⚡/cycle base + FM-tick costs |
 | Generate proof | 2× the execution's FM-tick cost, from the FM-tick quota |
 | Import/link | 2 FM-ticks per import |
 

@@ -444,6 +444,33 @@ pub struct SubstrateBus {
     sealed_inputs: SealedInputStore,
 }
 
+/// 封印済み入力ストア（デザイン 01-NEXUS.md §4.5）。
+/// SEALED_INPUT_PATH（00-OVERVIEW.md §7）配下の追記専用・コンテンツアドレス型ストア。
+pub struct SealedInputStore {
+    path: PathBuf,
+}
+
+/// 非決定的な外部入力の種別。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExternalInputKind {
+    LlmResponse,   // エージェントのthink結果（Keyward経由）
+    WebResponse,   // PortalのWebレスポンス封筒
+}
+
+impl SealedInputStore {
+    /// 外部入力を記録する。バス上の対応イベントにはcontent_hashのみが載る。
+    /// PortalとKeyward（Nexus経由）が取り込み時に呼び出す。
+    pub fn record_sealed_input(
+        &self,
+        kind: ExternalInputKind,
+        content_hash: Hash256,
+        payload: Vec<u8>,
+    ) -> Result<(), BusError>;
+
+    /// リプレイ時にcontent_hashからペイロードを読み出す（LLM/Webは再実行しない）。
+    pub fn read(&self, content_hash: &Hash256) -> Result<Option<Vec<u8>>, BusError>;
+}
+
 struct Subscriber {
     filter: EventFilter,
     sender: tokio::sync::broadcast::Sender<Event>,

@@ -67,6 +67,7 @@ CREATE TABLE nexus.agents (
     genome          BYTEA,                      -- LLM system prompt / personality seed
     last_active_cycle BIGINT NOT NULL DEFAULT 0,-- last cycle the agent consumed a tick
     inactive_cycles INTEGER NOT NULL DEFAULT 0, -- consecutive cycles with no activity
+    active_cycles   INTEGER NOT NULL DEFAULT 0, -- lifetime count of cycles with >=1 tick consumed (reputation smoothing — §9.3)
     balance_negative_cycles INTEGER NOT NULL DEFAULT 0, -- consecutive cycles with balance < 0
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -175,6 +176,7 @@ pub struct Agent {
     pub genome: Option<Vec<u8>>,
     pub last_active_cycle: u64,
     pub inactive_cycles: u32,
+    pub active_cycles: u32,     // lifetime count of cycles with >=1 tick consumed (reputation smoothing — §9.3)
     pub balance_negative_cycles: u32,
 }
 
@@ -280,6 +282,13 @@ pub trait Nexus: Send + Sync {
     ///  cycles are not fixed-length — see design 01-NEXUS.md §2.1).
     fn is_cycle_boundary(&self) -> bool;
 
+    /// Return the cycle number in which the agent was spawned.
+    /// Because cycles have variable tick length this cannot be derived by
+    /// dividing spawn_tick — it is looked up from the nexus.cycles table row
+    /// containing spawn_tick. (Used by the bankruptcy-grace check in §9.6 and
+    /// by Mint's process_bankruptcy.)
+    async fn spawn_cycle(&self, agent_id: &AgentId) -> Result<u64, NexusError>;
+
     // ── Identity ──────────────────────────────────────────────────────
 
     /// Spawn a new agent. Generates ed25519 keypair, assigns agent_id = sha256(pubkey).
@@ -327,7 +336,8 @@ pub trait Nexus: Send + Sync {
     /// Epoch gate (design 01-NEXUS.md §6.1):
     ///   - SPAWN_AGENT: from Epoch 2 (Foundation) onward
     ///   - KILL_AGENT / CHANGE_PARAM / EPOCH_ADVANCE / CUSTOM: from Epoch 5 (Sovereignty) onward
-    /// Pre-unlock kinds are rejected with an EpochLocked error.
+    /// Pre-unlock kinds are rejected with an EpochLocked error (wire name: EPOCH_LOCKED —
+    /// errors are CamelCase variants in Rust and SCREAMING_SNAKE_CASE on the protocol/logs).
     async fn submit_proposal(&self, proposal: Proposal) -> Result<Hash256, NexusError>;
 
     /// Cast a vote on a proposal. Weighted by voter's reputation.
@@ -350,7 +360,9 @@ pub trait Nexus: Send + Sync {
     /// Recompute reputation for an agent.
     /// Formula: 0.4*code_quality + 0.3*contribution_volume
     ///        + 0.2*economic_activity + 0.1*governance_participation
-    /// All values normalized to [0.0, 1.0].
+    /// All values normalized to [0.0, 1.0]. The computed value is blended with
+    /// the neutral prior 0.5 using w = min(1, active_cycles/20)
+    /// (design 01-NEXUS.md §6.3; see §9.3).
     async fn recompute_reputation(&self, agent_id: &AgentId) -> Result<ReputationBreakdown, NexusError>;
 
     /// Batch recompute reputation for all active agents. Called at cycle boundary.
@@ -603,8 +615,15 @@ reputation(agent_id):
     ea = normalize(mint.economic_activity(agent_id))           // [0.0, 1.0]
     gp = normalize(nexus.governance_participation(agent_id))   // [0.0, 1.0]
 
-    total = 0.4 * cq + 0.3 * cv + 0.2 * ea + 0.1 * gp
-    return clamp(total, 0.0, 1.0)
+    computed = 0.4 * cq + 0.3 * cv + 0.2 * ea + 0.1 * gp
+
+    // Blend with the neutral prior 0.5 (design 01-NEXUS.md §6.3):
+    // smooths the computed value until behavioral data accumulates, preventing
+    // the failure mode where the whole initial population sits at reputation 0
+    // and weighted voting cannot function.
+    w = min(1.0, agent.active_cycles / 20.0)
+    effective = w * computed + (1.0 - w) * 0.5
+    return clamp(effective, 0.0, 1.0)
 
 normalize(raw_value):
     // Normalize against the max value across all active agents
@@ -684,7 +703,7 @@ cycle_maintenance():
         else:
             agent.balance_negative_cycles = 0
         if agent.balance_negative_cycles >= 5:
-            if current_cycle - cycle_of(agent.spawn_tick) < BANKRUPTCY_GRACE_CYCLES:
+            if current_cycle - spawn_cycle(agent) < BANKRUPTCY_GRACE_CYCLES:
                 update_status(agent, DORMANT)   // publishes agent_status_change
                 mint.freeze_debt(agent.id)      // Mint publishes AGENT_BANKRUPT_GRACE (0x5043)
             else:

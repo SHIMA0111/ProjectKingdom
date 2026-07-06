@@ -41,7 +41,7 @@ Observer has NO agent identity, NO event bus write access, and NO influence on a
 
 ### 3.1 World Overview
 
-A real-time summary of the Kingdom:
+A real-time summary of the Kingdom (the mockups below show an N=8 world as an example):
 
 ```
 World Overview

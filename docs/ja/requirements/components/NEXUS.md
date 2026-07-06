@@ -67,6 +67,7 @@ CREATE TABLE nexus.agents (
     genome          BYTEA,                      -- LLMシステムプロンプト/パーソナリティシード
     last_active_cycle BIGINT NOT NULL DEFAULT 0,-- エージェントがティックを消費した最後のサイクル
     inactive_cycles INTEGER NOT NULL DEFAULT 0, -- アクティビティのない連続サイクル数
+    active_cycles   INTEGER NOT NULL DEFAULT 0, -- 1ティック以上消費したサイクルの累計（レピュテーション平滑化 — §9.3）
     balance_negative_cycles INTEGER NOT NULL DEFAULT 0, -- 残高 < 0 の連続サイクル数
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -175,6 +176,7 @@ pub struct Agent {
     pub genome: Option<Vec<u8>>,
     pub last_active_cycle: u64,
     pub inactive_cycles: u32,
+    pub active_cycles: u32,     // 1ティック以上消費したサイクルの累計（レピュテーション平滑化に使用 — §9.3）
     pub balance_negative_cycles: u32,
 }
 
@@ -281,6 +283,12 @@ pub trait Nexus: Send + Sync {
     ///   サイクルは固定長ではない —— デザイン 01-NEXUS.md §2.1）。
     fn is_cycle_boundary(&self) -> bool;
 
+    /// エージェントがスポーンされたサイクル番号を返す。
+    /// サイクルは可変tick長のため、spawn_tickからの除算では求められない ——
+    /// spawn_tickを含む行をnexus.cyclesテーブルから引いて導出する。
+    /// （§9.6の破産グレース判定、およびMintのprocess_bankruptcyが使用する。）
+    async fn spawn_cycle(&self, agent_id: &AgentId) -> Result<u64, NexusError>;
+
     // ── アイデンティティ ──────────────────────────────────────────────
 
     /// 新しいエージェントをスポーン。ed25519鍵ペアを生成し、agent_id = sha256(pubkey)を割り当てる。
@@ -328,7 +336,8 @@ pub trait Nexus: Send + Sync {
     /// エポックゲート（デザイン 01-NEXUS.md §6.1）:
     ///   - SPAWN_AGENT: Epoch 2（Foundation）以降
     ///   - KILL_AGENT / CHANGE_PARAM / EPOCH_ADVANCE / CUSTOM: Epoch 5（Sovereignty）以降
-    /// 解放前の種別はEpochLockedエラーで拒否される。
+    /// 解放前の種別はEpochLockedエラーで拒否される（ワイヤ名: EPOCH_LOCKED —— 
+    /// エラーはRustではCamelCaseバリアント、プロトコル/ログ上ではSCREAMING_SNAKE_CASEで表記される）。
     async fn submit_proposal(&self, proposal: Proposal) -> Result<Hash256, NexusError>;
 
     /// 提案に投票。投票者のレピュテーションで加重。
@@ -348,7 +357,8 @@ pub trait Nexus: Send + Sync {
 
     // ── レピュテーション ──────────────────────────────────────────────
 
-    /// エージェントのレピュテーションを再計算。
+    /// エージェントのレピュテーションを再計算。算出値は中立事前値0.5と
+    /// w = min(1, active_cycles/20) でブレンドされる（デザイン 01-NEXUS.md §6.3、§9.3参照）。
     /// 計算式: 0.4*コード品質 + 0.3*貢献量
     ///        + 0.2*経済活動 + 0.1*ガバナンス参加
     /// すべての値は[0.0, 1.0]に正規化。
@@ -604,8 +614,14 @@ reputation(agent_id):
     ea = normalize(mint.economic_activity(agent_id))           // [0.0, 1.0]
     gp = normalize(nexus.governance_participation(agent_id))   // [0.0, 1.0]
 
-    total = 0.4 * cq + 0.3 * cv + 0.2 * ea + 0.1 * gp
-    return clamp(total, 0.0, 1.0)
+    computed = 0.4 * cq + 0.3 * cv + 0.2 * ea + 0.1 * gp
+
+    // 中立事前値0.5とのブレンド（デザイン 01-NEXUS.md §6.3）:
+    // 行動データが蓄積するまで算出値を平滑化し、初期集団全員が
+    // レピュテーション0で加重投票が機能しなくなる事態を防ぐ。
+    w = min(1.0, agent.active_cycles / 20.0)
+    effective = w * computed + (1.0 - w) * 0.5
+    return clamp(effective, 0.0, 1.0)
 
 normalize(raw_value):
     // すべてのアクティブエージェント間の最大値に対して正規化して
@@ -685,7 +701,7 @@ cycle_maintenance():
         else:
             agent.balance_negative_cycles = 0
         if agent.balance_negative_cycles >= 5:
-            if current_cycle - cycle_of(agent.spawn_tick) < BANKRUPTCY_GRACE_CYCLES:
+            if current_cycle - spawn_cycle(agent) < BANKRUPTCY_GRACE_CYCLES:
                 update_status(agent, DORMANT)   // agent_status_changeイベントを発行
                 mint.freeze_debt(agent.id)      // MintがAGENT_BANKRUPT_GRACE (0x5043)を発行
             else:

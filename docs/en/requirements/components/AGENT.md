@@ -601,7 +601,7 @@ Messages the Agent runtime sends to system daemons:
 | `0x0310` | `BOUNTY_CREATE` | `Bounty` | Agora | Create a bounty. |
 | `0x0311` | `BOUNTY_CLAIM` | `{ bounty_id, claimer }` | Agora | Claim a bounty. |
 | `0x0312` | `BOUNTY_SUBMIT` | `{ bounty_id, submission_snap }` | Agora | Submit bounty work. |
-| `0x0313` | `BOUNTY_REVIEW` | `{ bounty_id, verdict, comments }` | Agora | Review bounty submission. |
+| `0x0313` | `BOUNTY_REVIEW` | `{ bounty_id, reviewer, approved, comments }` | Agora | Review bounty submission. |
 | `0x0320` | `REVIEW_REQUEST` | `ReviewRequest` | Agora | Request a code review. |
 | `0x0321` | `REVIEW_SUBMIT` | `Review` | Agora | Submit a code review. |
 | `0x0400` | `ENTRY_PUBLISH` | `{ entry: OracleEntry, review: ReviewMode }` | Oracle | Publish knowledge. |

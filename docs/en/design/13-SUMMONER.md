@@ -138,6 +138,10 @@ NEXUS computes the optimal agent configuration from the budget:
 ```
 fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLimits]) -> WorldPlan {
 
+  // Step 0: Reserve 10% of the total budget for Bridge translation (§4.1, 15-BRIDGE.md §7)
+  bridge_budget = budget_usd * 0.10
+  agent_budget  = budget_usd * 0.90
+
   // Step 1: Estimate cost per agent per cycle
   //   - 1 cycle = ~8 think calls (batch-think model: base 64 ticks ≈ 8 thinks + 56 action ticks
   //     — see 09-AGENT.md §4.1)
@@ -157,8 +161,8 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   ideal_cycles = 1000
 
   // Step 3: Determine agent count
-  max_agents_ideal = floor(budget_usd / (ideal_cycles * estimated_cost_per_agent_per_cycle))
-  max_agents_min   = floor(budget_usd / (min_cycles * estimated_cost_per_agent_per_cycle))
+  max_agents_ideal = floor(agent_budget / (ideal_cycles * estimated_cost_per_agent_per_cycle))
+  max_agents_min   = floor(agent_budget / (min_cycles * estimated_cost_per_agent_per_cycle))
 
   agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
 
@@ -176,16 +180,17 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   //   - When budget is tight → all TIER_3
   model_assignment = assign_models(roles, models, budget_usd)
 
-  return WorldPlan { agent_count, roles, model_assignment, estimated_cycles }
+  return WorldPlan { agent_count, roles, model_assignment, estimated_cycles,
+                     bridge_budget, agent_budget }
 }
 ```
 
-**Worked example** (budget $50, TIER_3 model: $1/M input, $0.1/M cached input, $5/M output):
+**Worked example** (budget $50 → agent budget $45 (90%), TIER_3 model: $1/M input, $0.1/M cached input, $5/M output):
 
 ```
 cost_per_think ≈ (5000×0.1 + 2000×1.0 + 800×5.0) / 1,000,000 ≈ $0.0065
 cost_per_agent_per_cycle ≈ 8 × $0.0065 ≈ $0.052
-→ 4-agent configuration: $0.208/cycle → ~240 cycles (satisfies min 100 cycles)
+→ 4-agent configuration: $0.208/cycle → ~216 cycles on $45 (satisfies min 100 cycles)
 → A TIER_1/2-heavy configuration would fall below 100 cycles, so NEXUS picks a TIER_3-centric plan
 ```
 
@@ -250,7 +255,7 @@ This is performed by NEXUS **without governance vote**. Resource allocation is a
 
 Each agent's "thought" (think) corresponds to one LLM API call and returns a **batch plan of up to THINK_BATCH_MAX (= 8) actions** (see [09-AGENT.md](./09-AGENT.md) §4.1).
 
-On wall-clock time: thinks of different agents run **concurrently**, bounded by provider rate limits. NEXUS schedules thinks to maximize throughput; only world actions are serialized in Lamport order ([01-NEXUS.md](./01-NEXUS.md) §2.1). The wall-clock duration of one cycle is on the order of "thinks per agent × latency," not the sum over all agents.
+On wall-clock time: thinks of different agents run **concurrently**, bounded by provider rate limits. NEXUS schedules thinks to maximize throughput; only world actions are serialized in Lamport order ([01-NEXUS.md](./01-NEXUS.md) §2.3). The wall-clock duration of one cycle is on the order of "thinks per agent × latency," not the sum over all agents.
 
 ```
 Kingdom side:                      LLM side:
