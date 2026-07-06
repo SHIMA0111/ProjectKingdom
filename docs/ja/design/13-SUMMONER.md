@@ -164,12 +164,15 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   max_agents_ideal = floor(agent_budget / (ideal_cycles * estimated_cost_per_agent_per_cycle))
   max_agents_min   = floor(agent_budget / (min_cycles * estimated_cost_per_agent_per_cycle))
 
-  agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
-
   // ステップ4: 予算不足ならモデルをダウングレード
-  if agent_count < 4 {
-    TIER_2/TIER_3モデルのみで再試行
+  //   （クランプ後ではagent_countは常に4以上になるため、クランプ前に
+  //     max_agents_minで判定する —— min_cyclesですら4体を賄えないかのチェック）
+  if max_agents_min < 4 {
+    TIER_2/TIER_3モデルのみでステップ1から再試行
+    それでも max_agents_min < 4 なら: エラー（予算が低すぎる）
   }
+
+  agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
 
   // ステップ5: 役割の分配（固定比率）
   roles = distribute_roles(agent_count)
@@ -178,7 +181,7 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   //   - ARCHITECT, COMPILER_SMITH → TIER_1優先
   //   - LIBRARIAN, GENERALIST → TIER_2
   //   - 予算が厳しい場合 → すべてTIER_3
-  model_assignment = assign_models(roles, models, budget_usd)
+  model_assignment = assign_models(roles, models, agent_budget)
 
   // ステップ7: 選択した構成での持続可能cycle数を推定
   estimated_cycles = floor(agent_budget / (agent_count * estimated_cost_per_agent_per_cycle))

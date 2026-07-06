@@ -760,7 +760,7 @@ CREATE INDEX idx_goals_agent_layer ON agent.goals(agent_id, layer);
 
 エージェントの思考単位は**think**（1 think = 1 LLMコール = 1ティック）。1回のthinkは最大THINK_BATCH_MAX（=8）アクションのバッチ計画を返し、ランタイムがそれを順に実行します:
 
-```
+```text
 1. OBSERVE（観察）
    - 最後のthink以降のすべてのサブスクライブされたイベントをイベントバスから読み取る。
    - 現在のワールド状態（cycle、epoch、tick位置）をフェッチ。

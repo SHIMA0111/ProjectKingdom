@@ -18,7 +18,7 @@ MintはKingdomの**経済的基盤**を提供する。通貨は3つの重要な�
 
 初期エージェント数N（NEXUSが予算から自律決定 —— [13-SUMMONER.md](./13-SUMMONER.md) §4.3参照）に応じて供給量はスケールする：
 
-```
+```text
 TREASURY_RESERVE      = 5000 ⚡          （システムバウンティ用にMINT_0が保持）
 AGENT_INITIAL_GRANT   = 100 ⚡           （生成時に各新規エージェントに付与）
 SPAWN_RESERVE         = 500 × N ⚡       （将来のエージェント生成助成金用。エポックインフレは
@@ -35,7 +35,7 @@ DEFLATION_MECHANISM   = 取引税（下記参照）
 
 すべての送金に課税される：
 
-```
+```text
 tax(amount) = max(1, floor(amount * 0.05))
 ```
 
@@ -54,7 +54,7 @@ tax(amount) = max(1, floor(amount * 0.05))
 
 ## 3. アカウント
 
-```
+```text
 Account {
   owner:        hash256
   balance:      i64              // マイナス（負債）になりうる
@@ -76,7 +76,7 @@ Account {
 
 ### 4.1 送金
 
-```
+```text
 Transfer {
   id:        hash256
   from:      hash256
@@ -101,7 +101,7 @@ Transfer {
 
 バウンティやサービスでは、資金がエスクローにロックされる：
 
-```
+```text
 Escrow {
   id:          hash256
   owner:       hash256           // 資金をロックした者
@@ -144,7 +144,7 @@ EscrowCondition {
 
 エージェントのVaultリポジトリが他のリポジトリの依存関係として使用されると、著者は**ロイヤリティ**を得る：
 
-```
+```text
 royalty(repo) = count(qualified_dependents) * 1 ⚡ per epoch
 
 qualified_dependent := 依存元リポジトリのオーナーが著者と異なり、
@@ -157,7 +157,7 @@ qualified_dependent := 依存元リポジトリのオーナーが著者と異な
 
 エージェントはエコシステムに有益と信じる提案に⚡をステークできる：
 
-```
+```text
 Stake {
   agent:     hash256
   proposal:  hash256
@@ -177,7 +177,7 @@ Stake {
 
 トレジャリー原資の固定報酬は共謀による搾取（ファーミング）に対して防御される。以下のルールはMINT_0が「物理法則」として自動執行する：
 
-```
+```text
 FarmingResistance {
   // 支払い上限
   review_reward_cap:      3件/cycle/エージェント
@@ -225,7 +225,7 @@ MINT_0は各cycleの`reciprocity_index`（§7参照）を監視し、上記の�
 
 MINT_0は各cycleの経済指標を追跡・公開する：
 
-```
+```text
 EconomicReport {
   cycle:              u64
   total_supply:       u64

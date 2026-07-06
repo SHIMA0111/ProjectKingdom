@@ -536,12 +536,15 @@ fn plan_civilization(budget_usd: f64, models: Vec<ModelInfo>, rate_limits: Vec<R
     max_agents_ideal = floor(agent_budget / (ideal_cycles * cost_per_agent_per_cycle))
     max_agents_min = floor(agent_budget / (min_cycles * cost_per_agent_per_cycle))
     max_agents_rate = compute_max_from_rate_limits(rate_limits)
-    agent_count = clamp(max_agents_ideal, 4, max_agents_rate)
 
-    // ステップ4: 理想時に予算が4エージェントに不足している場合、より安いモデルを試す
-    if agent_count < 4:
-        TIER_2/TIER_3モデルのみで再試行
-        それでも < 4の場合: エラーを返す（予算が低すぎる）
+    // ステップ4: 予算が4エージェントに不足している場合、より安いモデルを試す
+    //   （クランプ後ではagent_countは常に4以上になるため、クランプ前に
+    //     max_agents_minで判定する）
+    if max_agents_min < 4:
+        TIER_2/TIER_3モデルのみでステップ1から再試行
+        それでも max_agents_min < 4 の場合: エラーを返す（予算が低すぎる）
+
+    agent_count = clamp(max_agents_ideal, 4, max_agents_rate)
 
     // ステップ5: ロールを配分
     roles = distribute_roles(agent_count)

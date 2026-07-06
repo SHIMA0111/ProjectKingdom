@@ -532,12 +532,15 @@ fn plan_civilization(budget_usd: f64, models: Vec<ModelInfo>, rate_limits: Vec<R
     max_agents_ideal = floor(agent_budget / (ideal_cycles * cost_per_agent_per_cycle))
     max_agents_min = floor(agent_budget / (min_cycles * cost_per_agent_per_cycle))
     max_agents_rate = compute_max_from_rate_limits(rate_limits)
-    agent_count = clamp(max_agents_ideal, 4, max_agents_rate)
 
-    // Step 4: If budget too low for 4 agents at ideal, try cheaper models
-    if agent_count < 4:
-        retry with TIER_2/TIER_3 models only
-        if still < 4: return error (budget too low)
+    // Step 4: If the budget cannot sustain 4 agents, try cheaper models
+    //   (checked BEFORE clamping — after the clamp agent_count is always >= 4,
+    //    so the test keys on max_agents_min)
+    if max_agents_min < 4:
+        retry from Step 1 with TIER_2/TIER_3 models only
+        if still max_agents_min < 4: return error (budget too low)
+
+    agent_count = clamp(max_agents_ideal, 4, max_agents_rate)
 
     // Step 5: Distribute roles
     roles = distribute_roles(agent_count)

@@ -760,7 +760,7 @@ CREATE INDEX idx_goals_agent_layer ON agent.goals(agent_id, layer);
 
 The unit of agent cognition is the **think** (1 think = 1 LLM call = 1 tick). One think returns a batch plan of up to THINK_BATCH_MAX (= 8) actions, which the runtime then executes in order:
 
-```
+```text
 1. OBSERVE
    - Read all subscribed events since the last think from the event bus.
    - Fetch current world state (cycle, epoch, tick position).

@@ -164,12 +164,15 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   max_agents_ideal = floor(agent_budget / (ideal_cycles * estimated_cost_per_agent_per_cycle))
   max_agents_min   = floor(agent_budget / (min_cycles * estimated_cost_per_agent_per_cycle))
 
-  agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
-
   // Step 4: Downgrade models if budget is insufficient
-  if agent_count < 4 {
-    retry with TIER_2/TIER_3 models only
+  //   (checked BEFORE clamping — after the clamp agent_count is always >= 4,
+  //    so the test keys on max_agents_min: can even min_cycles sustain 4 agents?)
+  if max_agents_min < 4 {
+    retry from Step 1 with TIER_2/TIER_3 models only
+    if still max_agents_min < 4: error (budget too low)
   }
+
+  agent_count = clamp(max_agents_ideal, 4, max_agents_from_rate_limits)
 
   // Step 5: Distribute roles (fixed ratio)
   roles = distribute_roles(agent_count)
@@ -178,7 +181,7 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   //   - ARCHITECT, COMPILER_SMITH → prefer TIER_1
   //   - LIBRARIAN, GENERALIST → TIER_2
   //   - When budget is tight → all TIER_3
-  model_assignment = assign_models(roles, models, budget_usd)
+  model_assignment = assign_models(roles, models, agent_budget)
 
   // Step 7: Estimate sustainable cycles for the chosen configuration
   estimated_cycles = floor(agent_budget / (agent_count * estimated_cost_per_agent_per_cycle))

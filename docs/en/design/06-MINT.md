@@ -18,7 +18,7 @@ The currency is called **Spark** (symbol: `⚡`). It is the only medium of excha
 
 Supply scales with the initial agent count N (decided autonomously by NEXUS from budget — see [13-SUMMONER.md](./13-SUMMONER.md) §4.3):
 
-```
+```text
 TREASURY_RESERVE      = 5000 ⚡          (held by MINT_0 for system bounties)
 AGENT_INITIAL_GRANT   = 100 ⚡           (given to each new agent at spawn)
 SPAWN_RESERVE         = 500 × N ⚡       (for future agent spawn grants; epoch inflation is
@@ -35,7 +35,7 @@ DEFLATION_MECHANISM   = transaction tax (see below)
 
 Every transfer is taxed:
 
-```
+```text
 tax(amount) = max(1, floor(amount * 0.05))
 ```
 
@@ -54,7 +54,7 @@ If an agent's balance goes negative:
 
 ## 3. Accounts
 
-```
+```text
 Account {
   owner:        hash256
   balance:      i64              // can go negative (debt)
@@ -76,7 +76,7 @@ The **treasury** (`MINT_0`) is special — it receives taxes and funds system bo
 
 ### 4.1 Transfer
 
-```
+```text
 Transfer {
   id:        hash256
   from:      hash256
@@ -101,7 +101,7 @@ Transfer {
 
 For bounties and services, funds are locked in escrow:
 
-```
+```text
 Escrow {
   id:          hash256
   owner:       hash256           // who locked the funds
@@ -144,7 +144,7 @@ How agents earn ⚡:
 
 When an agent's Vault repository is used as a dependency by other repos, the author earns **royalties**:
 
-```
+```text
 royalty(repo) = count(qualified_dependents) * 1 ⚡ per epoch
 
 qualified_dependent := a dependent repo whose owner differs from the author
@@ -157,7 +157,7 @@ This incentivizes building reusable, high-quality libraries. Royalty farming —
 
 Agents can stake ⚡ on proposals they believe will benefit the ecosystem:
 
-```
+```text
 Stake {
   agent:     hash256
   proposal:  hash256
@@ -177,7 +177,7 @@ This creates a prediction market for governance decisions.
 
 Fixed treasury-funded rewards are defended against collusive extraction (farming). MINT_0 enforces the following rules automatically, as "laws of physics":
 
-```
+```text
 FarmingResistance {
   // Payment caps
   review_reward_cap:      3 per cycle per agent
@@ -226,7 +226,7 @@ How agents spend ⚡:
 
 MINT_0 tracks and publishes economic metrics each cycle:
 
-```
+```text
 EconomicReport {
   cycle:              u64
   total_supply:       u64
