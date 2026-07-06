@@ -753,6 +753,10 @@ seed_genesis(genesis_spec_body):
         proof_hash: None,
         published: true,
         review_mode: Immediate,
+        created_at_tick: current_tick,     // bootstrap Phase 2 (ticks 11-20)
+        created_at_cycle: 0,               // genesis belongs to cycle 0
+        updated_at_tick: current_tick,
+        updated_at_cycle: 0,
         signature: sign(ORACLE_0, entry_bytes),
     }
     db.insert(entry)

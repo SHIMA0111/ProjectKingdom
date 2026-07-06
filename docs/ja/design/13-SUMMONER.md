@@ -180,6 +180,9 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   //   - 予算が厳しい場合 → すべてTIER_3
   model_assignment = assign_models(roles, models, budget_usd)
 
+  // ステップ7: 選択した構成での持続可能cycle数を推定
+  estimated_cycles = floor(agent_budget / (agent_count * estimated_cost_per_agent_per_cycle))
+
   return WorldPlan { agent_count, roles, model_assignment, estimated_cycles,
                      bridge_budget, agent_budget }
 }
@@ -187,7 +190,7 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
 
 **具体例**（予算$50 → エージェント予算$45（90%）、TIER_3モデル: 入力$1/M・キャッシュ済み入力$0.1/M・出力$5/M と仮定）：
 
-```
+```text
 cost_per_think ≈ (5000×0.1 + 2000×1.0 + 800×5.0) / 1,000,000 ≈ $0.0065
 cost_per_agent_per_cycle ≈ 8 × $0.0065 ≈ $0.052
 → 4エージェント構成: $0.208/cycle → $45で約216 cycle（min 100 cycleを満たす）

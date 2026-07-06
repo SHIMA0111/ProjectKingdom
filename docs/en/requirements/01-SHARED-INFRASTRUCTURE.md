@@ -459,16 +459,19 @@ pub enum ExternalInputKind {
 }
 
 impl SealedInputStore {
-    /// Record an external input. The corresponding bus event carries only the
-    /// content_hash. Called by Portal and by Keyward (via Nexus) at ingestion time.
+    /// Record an external input and return content_hash = sha256(payload),
+    /// **derived internally**. The returned hash goes onto the corresponding
+    /// bus event. The hash is deliberately not caller-provided: sealing bytes
+    /// under a hash that doesn't match the payload would break replay integrity.
+    /// Called by Portal and by Keyward (via Nexus) at ingestion time.
     pub fn record_sealed_input(
         &self,
         kind: ExternalInputKind,
-        content_hash: Hash256,
         payload: Vec<u8>,
-    ) -> Result<(), BusError>;
+    ) -> Result<Hash256, BusError>;
 
     /// Read a payload back by content_hash during replay (LLM/web are never re-executed).
+    /// The payload read back is re-verified against its sha256.
     pub fn read(&self, content_hash: &Hash256) -> Result<Option<Vec<u8>>, BusError>;
 }
 

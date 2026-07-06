@@ -505,7 +505,9 @@ fn handle_request(req: PortalRequest) -> Result<PortalResponse>:
     envelope = { status: http_response.status, content_type, filtered_content, filter_report }
     envelope_bytes = msgpack_encode(envelope)   // 共有エンコーダ（01-SHARED-INFRASTRUCTURE.md §3）
                                                 // でバイト表現を固定し、ハッシュを安定化する
-    record_sealed_input(WEB_RESPONSE, sha256(envelope_bytes), envelope_bytes)
+    content_hash = record_sealed_input(WEB_RESPONSE, envelope_bytes)
+                                                // content_hash = sha256(envelope_bytes)はストアが
+                                                // 内部で導出して返す。バスイベントにはこれを載せる
 
     // 8. コスト課金
     cost = match req.method:

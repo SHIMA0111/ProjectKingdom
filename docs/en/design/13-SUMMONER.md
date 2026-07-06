@@ -180,6 +180,9 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
   //   - When budget is tight → all TIER_3
   model_assignment = assign_models(roles, models, budget_usd)
 
+  // Step 7: Estimate sustainable cycles for the chosen configuration
+  estimated_cycles = floor(agent_budget / (agent_count * estimated_cost_per_agent_per_cycle))
+
   return WorldPlan { agent_count, roles, model_assignment, estimated_cycles,
                      bridge_budget, agent_budget }
 }
@@ -187,7 +190,7 @@ fn plan_civilization(budget_usd: f64, models: [ModelInfo], rate_limits: [RateLim
 
 **Worked example** (budget $50 → agent budget $45 (90%), TIER_3 model: $1/M input, $0.1/M cached input, $5/M output):
 
-```
+```text
 cost_per_think ≈ (5000×0.1 + 2000×1.0 + 800×5.0) / 1,000,000 ≈ $0.0065
 cost_per_agent_per_cycle ≈ 8 × $0.0065 ≈ $0.052
 → 4-agent configuration: $0.208/cycle → ~216 cycles on $45 (satisfies min 100 cycles)

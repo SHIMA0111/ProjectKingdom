@@ -752,6 +752,10 @@ seed_genesis(genesis_spec_body):
         proof_hash: None,
         published: true,
         review_mode: Immediate,
+        created_at_tick: current_tick,     // ブートストラップ Phase 2（tick 11-20）
+        created_at_cycle: 0,               // ジェネシスはサイクル0に属する
+        updated_at_tick: current_tick,
+        updated_at_cycle: 0,
         signature: sign(ORACLE_0, entry_bytes),
     }
     db.insert(entry)

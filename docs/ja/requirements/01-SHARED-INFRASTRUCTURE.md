@@ -458,16 +458,18 @@ pub enum ExternalInputKind {
 }
 
 impl SealedInputStore {
-    /// 外部入力を記録する。バス上の対応イベントにはcontent_hashのみが載る。
+    /// 外部入力を記録し、content_hash = sha256(payload) を**内部で導出して**返す。
+    /// 返り値をバス上の対応イベントに載せる。ハッシュを呼び出し側から受け取らないのは、
+    /// payloadと一致しないハッシュで封印されるとリプレイ整合性が崩れるためである。
     /// PortalとKeyward（Nexus経由）が取り込み時に呼び出す。
     pub fn record_sealed_input(
         &self,
         kind: ExternalInputKind,
-        content_hash: Hash256,
         payload: Vec<u8>,
-    ) -> Result<(), BusError>;
+    ) -> Result<Hash256, BusError>;
 
     /// リプレイ時にcontent_hashからペイロードを読み出す（LLM/Webは再実行しない）。
+    /// 読み出したペイロードはsha256で再検証される。
     pub fn read(&self, content_hash: &Hash256) -> Result<Option<Vec<u8>>, BusError>;
 }
 
