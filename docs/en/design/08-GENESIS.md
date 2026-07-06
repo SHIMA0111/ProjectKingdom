@@ -242,6 +242,7 @@ fn add_and_check(a: u64, b: u64) -> u64 {
 
 Rules:
 - `in`/`out` are **contextual keywords** meaningful only inside the binding list; they are not reserved words (the keyword set stays at the 15 words of §3.3).
+- Bindings execute grouped by kind: all `in` bindings before the block runs, all `out` bindings after. Within each group, expression/lvalue evaluation and the copies proceed **in binding-list source order (left to right)**.
 - The contents of registers not named in a binding must never be assumed. The compiler saves/restores any registers the `asm` block uses.
 - The lvalue of an `out` binding must be `mut`.
 - Multiple `in` bindings to the same register, or multiple `out` bindings from the same register, are compile errors.
@@ -510,6 +511,6 @@ primary        = INTEGER | BYTE | STRING | "true" | "false"
                | "[" expression ";" INTEGER "]" ;                      (* array initializer *)
 ```
 
-**Operator precedence** (highest first): postfix (call/index/field) > unary (`!` `-` `*` `&` `~`) > `as` > `*` `/` `%` > `+` `-` > `<<` `>>` > `&` > `^` > `|` > comparison > `&&` > `||`. Same-precedence operators are left-associative (`as` and unary are the right-associative exceptions). Note that bitwise operators bind tighter than comparison: `a & b == c` parses as `(a & b) == c` (Genesis does not inherit C's historical precedence mistake).
+**Operator precedence** (highest first): postfix (call/index/field) > unary (`!` `-` `*` `&` `~`) > `as` > `*` `/` `%` > `+` `-` > `<<` `>>` > `&` > `^` > `|` > comparison > `&&` > `||`. Binary operators and `as` are left-associative: `x as A as B` parses as `(x as A) as B`. Unary prefix operators are right-associative (`!!x` = `!(!x)`). Note that bitwise operators bind tighter than comparison: `a & b == c` parses as `(a & b) == c` (Genesis does not inherit C's historical precedence mistake).
 
 Comparison operators are **non-associative**: `a < b < c` is a syntax error.
